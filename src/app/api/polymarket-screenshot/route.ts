@@ -3,6 +3,57 @@ import { PolymarketScreenshotService } from '@/polymarket-screenshotter/lib/poly
 
 export const maxDuration = 60 // Allow up to 60 seconds for screenshot capture
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __polymarketScreenshotService: PolymarketScreenshotService | undefined
+  // eslint-disable-next-line no-var
+  var __polymarketScreenshotServiceInit: Promise<PolymarketScreenshotService> | undefined
+  // eslint-disable-next-line no-var
+  var __polymarketScreenshotSemaphore:
+    | { max: number; active: number; queue: Array<() => void> }
+    | undefined
+}
+
+async function getWarmService(): Promise<PolymarketScreenshotService> {
+  if (globalThis.__polymarketScreenshotService) return globalThis.__polymarketScreenshotService
+
+  if (!globalThis.__polymarketScreenshotServiceInit) {
+    globalThis.__polymarketScreenshotServiceInit = (async () => {
+      const service = new PolymarketScreenshotService()
+      await service.initialize()
+      globalThis.__polymarketScreenshotService = service
+      return service
+    })()
+  }
+
+  return globalThis.__polymarketScreenshotServiceInit
+}
+
+function getSemaphore() {
+  if (!globalThis.__polymarketScreenshotSemaphore) {
+    const max = Math.max(1, Number(process.env.SCREENSHOT_CONCURRENCY || 2))
+    globalThis.__polymarketScreenshotSemaphore = { max, active: 0, queue: [] }
+  }
+  return globalThis.__polymarketScreenshotSemaphore
+}
+
+async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
+  const sem = getSemaphore()
+
+  if (sem.active >= sem.max) {
+    await new Promise<void>(resolve => sem.queue.push(resolve))
+  }
+
+  sem.active += 1
+  try {
+    return await fn()
+  } finally {
+    sem.active -= 1
+    sem.queue.shift()?.()
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,38 +77,33 @@ export async function POST(request: NextRequest) {
 
     console.log(`📸 Starting Polymarket screenshot capture for: ${url}`)
 
-    const service = new PolymarketScreenshotService()
-    
-    try {
-      await service.initialize()
-      
-      const result = await service.captureMarketScreenshot(url, {
+    const service = await getWarmService()
+
+    const result = await withSemaphore(() =>
+      service.captureMarketScreenshot(url, {
         width: width || 700,
         deviceScaleFactor: deviceScaleFactor || 2,
-        timeRange: timeRange || '6h' // Default to 6H for better x-axis labels
+        timeRange: timeRange || '6h', // Default to 6H for better x-axis labels
       })
+    )
 
-      if (!result.success || !result.screenshot) {
-        return NextResponse.json(
-          { success: false, error: result.error || 'Screenshot capture failed' },
-          { status: 500 }
-        )
-      }
-
-      // Return the screenshot as a PNG image
-      return new NextResponse(new Uint8Array(result.screenshot), {
-        status: 200,
-        headers: {
-          'Content-Type': 'image/png',
-          'Content-Disposition': `attachment; filename="${result.fileName}"`,
-          'X-Market-Title': encodeURIComponent(result.marketTitle || ''),
-          'X-Market-URL': encodeURIComponent(result.url || '')
-        }
-      })
-
-    } finally {
-      await service.cleanup()
+    if (!result.success || !result.screenshot) {
+      return NextResponse.json(
+        { success: false, error: result.error || 'Screenshot capture failed' },
+        { status: 500 }
+      )
     }
+
+    // Return the screenshot as a PNG image
+    return new NextResponse(new Uint8Array(result.screenshot), {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png',
+        'Content-Disposition': `attachment; filename="${result.fileName}"`,
+        'X-Market-Title': encodeURIComponent(result.marketTitle || ''),
+        'X-Market-URL': encodeURIComponent(result.url || ''),
+      },
+    })
 
   } catch (error) {
     console.error('❌ Polymarket screenshot API error:', error)
@@ -92,49 +138,45 @@ export async function GET(request: NextRequest) {
 
   console.log(`📸 Starting Polymarket screenshot capture for: ${url}`)
 
-  const service = new PolymarketScreenshotService()
-  
-  try {
-    await service.initialize()
-    
-    const result = await service.captureMarketScreenshot(url, {
+  const service = await getWarmService()
+
+  const result = await withSemaphore(() =>
+    service.captureMarketScreenshot(url, {
       width: width ? parseInt(width) : 700,
       deviceScaleFactor: 2,
-      timeRange: timeRange as '1h' | '6h' | '1d' | '1w' | '1m' | 'max'
+      timeRange: timeRange as '1h' | '6h' | '1d' | '1w' | '1m' | 'max',
     })
+  )
 
-    if (!result.success || !result.screenshot) {
-      return NextResponse.json(
-        { success: false, error: result.error || 'Screenshot capture failed' },
-        { status: 500 }
-      )
-    }
-
-    if (returnType === 'json') {
-      // Return as base64 JSON for frontend display
-      return NextResponse.json({
-        success: true,
-        fileName: result.fileName,
-        marketTitle: result.marketTitle,
-        url: result.url,
-        imageBase64: result.screenshot.toString('base64'),
-        imageMimeType: 'image/png'
-      })
-    }
-
-    // Return the screenshot as a PNG image
-    return new NextResponse(new Uint8Array(result.screenshot), {
-      status: 200,
-      headers: {
-        'Content-Type': 'image/png',
-        'Content-Disposition': `inline; filename="${result.fileName}"`,
-        'X-Market-Title': encodeURIComponent(result.marketTitle || ''),
-        'X-Market-URL': encodeURIComponent(result.url || ''),
-        'Cache-Control': 'no-store, max-age=0'
-      }
-    })
-
-  } finally {
-    await service.cleanup()
+  if (!result.success || !result.screenshot) {
+    return NextResponse.json(
+      { success: false, error: result.error || 'Screenshot capture failed' },
+      { status: 500 }
+    )
   }
+
+  if (returnType === 'json') {
+    // Return as base64 JSON for frontend display
+    return NextResponse.json({
+      success: true,
+      fileName: result.fileName,
+      marketTitle: result.marketTitle,
+      url: result.url,
+      imageBase64: result.screenshot.toString('base64'),
+      imageMimeType: 'image/png',
+    })
+  }
+
+  // Return the screenshot as a PNG image
+  return new NextResponse(new Uint8Array(result.screenshot), {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/png',
+      'Content-Disposition': `inline; filename="${result.fileName}"`,
+      'X-Market-Title': encodeURIComponent(result.marketTitle || ''),
+      'X-Market-URL': encodeURIComponent(result.url || ''),
+      'Cache-Control': 'no-store, max-age=0',
+    },
+  })
+
 }
