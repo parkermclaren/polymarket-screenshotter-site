@@ -4,11 +4,14 @@ import puppeteer, { Browser, Page } from 'puppeteer'
 // This means for a given width, height = width * 8/7
 const TWITTER_ASPECT_RATIO = 8 / 7
 
+type ChartWatermarkMode = 'none' | 'wordmark' | 'icon'
+
 interface ScreenshotOptions {
   width?: number
   height?: number
   deviceScaleFactor?: number
   timeRange?: '1h' | '6h' | '1d' | '1w' | '1m' | 'max' // Chart time range, defaults to '1d'
+  chartWatermark?: ChartWatermarkMode | boolean // Watermark mode; boolean true maps to 'wordmark'
 }
 
 interface ScreenshotResult {
@@ -346,8 +349,17 @@ export class PolymarketScreenshotService {
       console.log('🔍 DEBUG Buy buttons:', JSON.stringify(debugInfo, null, 2))
 
       // DOM manipulation for clean screenshot
-      await page.evaluate(() => {
+      const chartWatermark: ChartWatermarkMode =
+        options.chartWatermark === true
+          ? 'wordmark'
+          : options.chartWatermark === false || options.chartWatermark === undefined
+            ? 'none'
+            : options.chartWatermark
+      console.log('[DEBUG] chartWatermark option:', chartWatermark)
+      await page.evaluate((watermarkMode: ChartWatermarkMode) => {
+        const enableWatermark = watermarkMode !== 'none'
         // 1. FORCE LIGHT MODE
+        document.documentElement.setAttribute('data-chart-watermark', watermarkMode)
         document.documentElement.classList.remove('dark')
         document.documentElement.classList.add('light')
         document.documentElement.setAttribute('data-theme', 'light')
@@ -375,6 +387,12 @@ export class PolymarketScreenshotService {
           title.style.setProperty('margin-top', '0px', 'important')
           title.style.setProperty('margin-bottom', '10px', 'important')
           title.style.setProperty('padding-top', '0px', 'important')
+        }
+
+        // Remove the Middle East warning banner if present
+        const middleEastBanner = document.querySelector('#middle-east-warning-banner') as HTMLElement | null
+        if (middleEastBanner) {
+          middleEastBanner.remove()
         }
 
         // Enlarge market icon (image to the left of the title)
@@ -472,6 +490,7 @@ export class PolymarketScreenshotService {
           document.querySelectorAll('svg[viewBox="0 0 911 168"]')
         ) as HTMLElement[]
         polymarketLogos.forEach(logo => {
+          const container = logo.closest('div.ml-auto.self-end') as HTMLElement | null
           // Scale proportionally (was ~24px via `h-6`; bump to ~32px)
           logo.style.setProperty('height', '32px', 'important')
           logo.style.setProperty('width', 'auto', 'important')
@@ -695,7 +714,29 @@ export class PolymarketScreenshotService {
         })
 
         // 9. INCREASE CHART HEIGHT - make the chart take up more vertical space
-        const chartContainer = document.querySelector('#group-chart-container') as HTMLElement | null
+        const findChartContainer = (): HTMLElement | null => {
+          const byId = document.querySelector('#group-chart-container') as HTMLElement | null
+          if (byId) return byId
+
+          const byTestId = document.querySelector('[data-testid="chart-container"]') as HTMLElement | null
+          if (byTestId) return byTestId
+
+          const byClass = document.querySelector('[class*="chart-container"]') as HTMLElement | null
+          if (byClass) return byClass
+
+          const byChartSvg = document.querySelector(
+            '#group-chart-container svg, svg[class*="chart"], svg[class*="recharts"], svg[class*="visx"]'
+          ) as SVGElement | null
+          if (byChartSvg) {
+            return (byChartSvg.closest('div') as HTMLElement | null) || (byChartSvg.parentElement as HTMLElement | null)
+          }
+
+          return null
+        }
+
+        const chartContainer = findChartContainer()
+        console.log('[DEBUG] chartWatermark enabled:', enableWatermark)
+        console.log('[DEBUG] chartContainer found:', !!chartContainer)
         if (chartContainer) {
           // Increase chart height from default 272px to 400px
           const newChartHeight = '400px'
@@ -709,8 +750,84 @@ export class PolymarketScreenshotService {
             chartSvg.setAttribute('height', '400')
             chartSvg.style.setProperty('height', '400px', 'important')
           }
+
+          if (enableWatermark) {
+            console.log('[DEBUG] Applying chart watermark overlay')
+            // Ensure the chart container is positioned for absolute overlays
+            const chartStyle = window.getComputedStyle(chartContainer)
+            if (chartStyle.position === 'static') {
+              chartContainer.style.setProperty('position', 'relative', 'important')
+            }
+
+            // Remove any existing watermark first (idempotent)
+            const existing = chartContainer.querySelector('#chart-watermark-overlay')
+            if (existing) {
+              existing.remove()
+            }
+
+            const overlay = document.createElement('div')
+            overlay.id = 'chart-watermark-overlay'
+            overlay.style.setProperty('position', 'absolute', 'important')
+            overlay.style.setProperty('inset', '0', 'important')
+            overlay.style.setProperty('display', 'flex', 'important')
+            overlay.style.setProperty('align-items', 'center', 'important')
+            overlay.style.setProperty('justify-content', 'center', 'important')
+            overlay.style.setProperty('pointer-events', 'none', 'important')
+            overlay.style.setProperty('z-index', '2', 'important')
+            overlay.style.setProperty('opacity', '0.08', 'important')
+            overlay.style.setProperty('transform', 'none', 'important')
+
+            const buildWordmark = (): Node => {
+              const logoSvg =
+                (document.querySelector('div.ml-auto.self-end svg[viewBox="0 0 911 168"]') as SVGElement | null) ||
+                (document.querySelector('svg[viewBox="0 0 911 168"]') as SVGElement | null)
+              console.log('[DEBUG] Watermark wordmark SVG found:', !!logoSvg)
+              if (logoSvg) {
+                const clone = logoSvg.cloneNode(true) as SVGElement
+                clone.removeAttribute('height')
+                clone.removeAttribute('width')
+                clone.style.setProperty('height', '90px', 'important')
+                clone.style.setProperty('width', 'auto', 'important')
+                clone.style.setProperty('opacity', '1', 'important')
+                clone.style.setProperty('color', '#9ca3af', 'important')
+                return clone
+              }
+              console.log('[DEBUG] Wordmark SVG missing, using text fallback')
+              const text = document.createElement('div')
+              text.textContent = 'Polymarket'
+              text.style.setProperty('font-size', '36px', 'important')
+              text.style.setProperty('font-weight', '700', 'important')
+              text.style.setProperty('color', '#9ca3af', 'important')
+              return text
+            }
+
+            const buildIcon = (): Node => {
+              const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+              svg.setAttribute('viewBox', '0 0 137 165')
+              svg.setAttribute('fill', 'none')
+              svg.style.setProperty('height', '330px', 'important')
+              svg.style.setProperty('width', '330px', 'important')
+              svg.style.setProperty('opacity', '1', 'important')
+              svg.style.setProperty('color', '#9ca3af', 'important')
+
+              const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+              path.setAttribute(
+                'd',
+                'M136.267 152.495c0 7.265 0 10.897-2.376 12.697-2.375 1.801-5.872.82-12.867-1.143L8.632 132.51c-4.214-1.182-6.321-1.773-7.54-3.381-1.218-1.607-1.218-3.796-1.218-8.172V47.043c0-4.376 0-6.565 1.218-8.172 1.219-1.608 3.326-2.199 7.54-3.381L121.024 3.95c6.995-1.963 10.492-2.944 12.867-1.143s2.376 5.432 2.376 12.697zM27.904 122.228l93.062 26.117V96.113zm-12.73-12.117L108.217 84 15.174 57.889zm12.73-64.339 93.062 26.116V19.655z'
+              )
+              path.setAttribute('fill', 'currentColor')
+              svg.appendChild(path)
+              return svg
+            }
+
+            const node: Node = watermarkMode === 'icon' ? buildIcon() : buildWordmark()
+            overlay.appendChild(node)
+
+            chartContainer.appendChild(overlay)
+          }
         }
-      })
+      }, chartWatermark)
+      console.log('[DEBUG] chartWatermark evaluate completed')
 
       // Let layout settle after DOM manipulation
       // Use a shorter wait, just enough for styles to apply
@@ -738,6 +855,29 @@ export class PolymarketScreenshotService {
       // Final cleanup pass - remove "How it works" right before screenshot
       // This catches elements that may have been added after initial DOM manipulation
       await page.evaluate(() => {
+        const hideElement = (el: HTMLElement | null) => {
+          if (!el) return
+          el.style.setProperty('display', 'none', 'important')
+        }
+
+        // Target only direct UI elements with "How it works" text (avoid large containers)
+        const howTargets = Array.from(
+          document.querySelectorAll('button, a, span')
+        ).filter(el => /how it works/i.test((el as HTMLElement).textContent || '')) as HTMLElement[]
+
+        howTargets.forEach(target => {
+          const button = target.closest('button') as HTMLElement | null
+          const link = target.closest('a') as HTMLElement | null
+          const candidate = button || link || target
+
+          // Never hide a container that also contains trading buttons.
+          if (candidate.querySelector('.trading-button')) {
+            hideElement(target)
+          } else {
+            hideElement(candidate)
+          }
+        })
+
         // Find and remove/hide "How it works" banner.
         // IMPORTANT: Some Polymarket layouts render "How it works" inside the *same fixed bar*
         // container as the Buy buttons. In those cases, we must hide only the banner sub-tree,
@@ -868,20 +1008,20 @@ export class PolymarketScreenshotService {
           el.style.display = 'block'
         })
 
-        // Make Buy buttons taller/thicker to match reference
+        // Make Buy buttons taller/thicker to fill more of their section
         document.querySelectorAll('.trading-button').forEach(btn => {
           const button = btn as HTMLElement
-          button.style.setProperty('height', '64px', 'important')
-          button.style.setProperty('min-height', '64px', 'important')
-          button.style.setProperty('padding-top', '18px', 'important')
-          button.style.setProperty('padding-bottom', '18px', 'important')
+          button.style.setProperty('height', '72px', 'important')
+          button.style.setProperty('min-height', '72px', 'important')
+          button.style.setProperty('padding-top', '20px', 'important')
+          button.style.setProperty('padding-bottom', '20px', 'important')
         })
 
         // Also increase the span wrapper height
         document.querySelectorAll('.trading-button').forEach(btn => {
           const parent = btn.parentElement as HTMLElement | null
           if (parent && parent.tagName === 'SPAN') {
-            parent.style.setProperty('height', '64px', 'important')
+            parent.style.setProperty('height', '72px', 'important')
           }
         })
 
@@ -1002,7 +1142,7 @@ export class PolymarketScreenshotService {
 
        // After the time range updates, force all x-axis tick labels to render visibly.
        await page.evaluate(() => {
-         // DEBUG: Log all tick information (serialize properly for console.log)
+        // DEBUG: Log all tick information (serialize properly for console.log)
          const ticks = document.querySelectorAll('.visx-axis-tick')
          console.log('[DEBUG] Total .visx-axis-tick elements found:', ticks.length)
          
@@ -1097,11 +1237,113 @@ export class PolymarketScreenshotService {
            el.style.overflow = 'visible'
            el.setAttribute('overflow', 'visible')
          })
+
+        // Re-apply chart watermark after time range updates (chart often re-renders)
+        const findChartContainer = (): HTMLElement | null => {
+          const byId = document.querySelector('#group-chart-container') as HTMLElement | null
+          if (byId) return byId
+
+          const byTestId = document.querySelector('[data-testid="chart-container"]') as HTMLElement | null
+          if (byTestId) return byTestId
+
+          const byClass = document.querySelector('[class*="chart-container"]') as HTMLElement | null
+          if (byClass) return byClass
+
+          const byChartSvg = document.querySelector(
+            '#group-chart-container svg, svg[class*="chart"], svg[class*="recharts"], svg[class*="visx"]'
+          ) as SVGElement | null
+          if (byChartSvg) {
+            return (byChartSvg.closest('div') as HTMLElement | null) || (byChartSvg.parentElement as HTMLElement | null)
+          }
+
+          return null
+        }
+
+        const chartContainer = findChartContainer()
+        const watermarkMode =
+          (document.documentElement.getAttribute('data-chart-watermark') as ChartWatermarkMode | null) || 'none'
+        if (watermarkMode !== 'none' && chartContainer) {
+          const chartStyle = window.getComputedStyle(chartContainer)
+          if (chartStyle.position === 'static') {
+            chartContainer.style.setProperty('position', 'relative', 'important')
+          }
+
+          const existing = chartContainer.querySelector('#chart-watermark-overlay')
+          if (existing) {
+            existing.remove()
+          }
+
+          const overlay = document.createElement('div')
+          overlay.id = 'chart-watermark-overlay'
+          overlay.style.setProperty('position', 'absolute', 'important')
+          overlay.style.setProperty('inset', '0', 'important')
+          overlay.style.setProperty('display', 'flex', 'important')
+          overlay.style.setProperty('align-items', 'center', 'important')
+          overlay.style.setProperty('justify-content', 'center', 'important')
+          overlay.style.setProperty('pointer-events', 'none', 'important')
+          overlay.style.setProperty('z-index', '6', 'important')
+          overlay.style.setProperty('opacity', '0.1', 'important')
+          overlay.style.setProperty('transform', 'none', 'important')
+
+          const buildWordmark = (): Node => {
+            const logoSvg =
+              (document.querySelector('div.ml-auto.self-end svg[viewBox="0 0 911 168"]') as SVGElement | null) ||
+              (document.querySelector('svg[viewBox="0 0 911 168"]') as SVGElement | null)
+
+            if (logoSvg) {
+              const clone = logoSvg.cloneNode(true) as SVGElement
+              clone.removeAttribute('height')
+              clone.removeAttribute('width')
+              clone.style.setProperty('height', '90px', 'important')
+              clone.style.setProperty('width', 'auto', 'important')
+              clone.style.setProperty('opacity', '1', 'important')
+              clone.style.setProperty('color', '#9ca3af', 'important')
+              return clone
+            }
+
+            const text = document.createElement('div')
+            text.textContent = 'Polymarket'
+            text.style.setProperty('font-size', '36px', 'important')
+            text.style.setProperty('font-weight', '700', 'important')
+            text.style.setProperty('color', '#9ca3af', 'important')
+            return text
+          }
+
+          const buildIcon = (): Node => {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+            svg.setAttribute('viewBox', '0 0 137 165')
+            svg.setAttribute('fill', 'none')
+            svg.style.setProperty('height', '330px', 'important')
+            svg.style.setProperty('width', '330px', 'important')
+            svg.style.setProperty('opacity', '1', 'important')
+            svg.style.setProperty('color', '#9ca3af', 'important')
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+            path.setAttribute(
+              'd',
+              'M136.267 152.495c0 7.265 0 10.897-2.376 12.697-2.375 1.801-5.872.82-12.867-1.143L8.632 132.51c-4.214-1.182-6.321-1.773-7.54-3.381-1.218-1.607-1.218-3.796-1.218-8.172V47.043c0-4.376 0-6.565 1.218-8.172 1.219-1.608 3.326-2.199 7.54-3.381L121.024 3.95c6.995-1.963 10.492-2.944 12.867-1.143s2.376 5.432 2.376 12.697zM27.904 122.228l93.062 26.117V96.113zm-12.73-12.117L108.217 84 15.174 57.889zm12.73-64.339 93.062 26.116V19.655z'
+            )
+            path.setAttribute('fill', 'currentColor')
+            svg.appendChild(path)
+            return svg
+          }
+
+          const node: Node = watermarkMode === 'icon' ? buildIcon() : buildWordmark()
+          overlay.appendChild(node)
+
+          chartContainer.appendChild(overlay)
+        }
        })
 
       // Extra wait to ensure axis labels are fully rendered after manipulation
       // Reduced from 500ms - manipulation is synchronous, just need paint
       await new Promise(resolve => setTimeout(resolve, 50))
+
+      // Node-side debug: ensure watermark exists right before screenshot
+      if (chartWatermark !== 'none') {
+        const hasWatermark = await page.$('#chart-watermark-overlay')
+        console.log('🧩 Watermark overlay present before screenshot:', !!hasWatermark)
+      }
 
       console.log('📸 Taking viewport screenshot (should include fixed Buy bar at bottom)...')
       const screenshot = await page.screenshot({

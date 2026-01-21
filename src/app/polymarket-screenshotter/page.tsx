@@ -15,7 +15,7 @@ interface ScreenshotResult {
 export default function PolymarketScreenshotterPage() {
   const [url, setUrl] = useState('')
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '1d' | '1w' | '1m' | 'max'>('1d')
-  const [chartWatermark, setChartWatermark] = useState(false)
+  const [chartWatermark, setChartWatermark] = useState<'none' | 'wordmark' | 'icon'>('none')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ScreenshotResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,7 +40,7 @@ export default function PolymarketScreenshotterPage() {
         url,
         timeRange,
         return: 'json',
-        ...(chartWatermark && { chartWatermark: 'true' })
+        ...(chartWatermark !== 'none' && { chartWatermark })
       })
       const response = await fetch(`/api/polymarket-screenshot?${params.toString()}`)
       const data = await response.json()
@@ -177,19 +177,20 @@ export default function PolymarketScreenshotterPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="block text-sm font-medium text-gray-900 mb-2 invisible">
-                Options
+              <label htmlFor="chart-watermark" className="block text-sm font-medium text-gray-900 mb-2">
+                Chart watermark
               </label>
-              <label className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm cursor-pointer hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" style={{ minHeight: '48px' }}>
-                <input
-                  type="checkbox"
-                  checked={chartWatermark}
-                  onChange={(e) => setChartWatermark(e.target.checked)}
-                  disabled={loading}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="text-sm">Chart watermark</span>
-              </label>
+              <select
+                id="chart-watermark"
+                value={chartWatermark}
+                onChange={(e) => setChartWatermark(e.target.value as typeof chartWatermark)}
+                disabled={loading}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+              >
+                <option value="none">None</option>
+                <option value="wordmark">Wordmark</option>
+                <option value="icon">Icon</option>
+              </select>
             </div>
 
             <div className="flex flex-col">
