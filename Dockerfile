@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production
 # We use system chromium; avoid downloading Chromium during npm install
 # Puppeteer v20+ uses PUPPETEER_SKIP_DOWNLOAD; keep the legacy var too.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
@@ -37,10 +36,13 @@ ENV PORT=3000
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
+# Install devDependencies for the build step (Tailwind/PostCSS live in devDeps)
 RUN npm ci
 
 COPY . .
 RUN npm run build
+
+ENV NODE_ENV=production
 
 # Railway provides PORT; our npm start uses it.
 EXPOSE 3000
