@@ -28,8 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV NODE_ENV=production
 # We use system chromium; avoid downloading Chromium during npm install
+# Puppeteer v20+ uses PUPPETEER_SKIP_DOWNLOAD; keep the legacy var too.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PORT=3000
 
 WORKDIR /app
 

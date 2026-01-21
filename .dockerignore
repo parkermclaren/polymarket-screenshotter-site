@@ -1,7 +1,14 @@
 node_modules
 .next
+.vercel
+.turbo
+.swc
+.next/cache
 .git
 .DS_Store
 npm-debug.log
+*.log
+.env
+.env.*
 README.md
 
