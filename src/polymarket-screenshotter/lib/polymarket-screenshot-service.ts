@@ -738,31 +738,65 @@ export class PolymarketScreenshotService {
       // Final cleanup pass - remove "How it works" right before screenshot
       // This catches elements that may have been added after initial DOM manipulation
       await page.evaluate(() => {
-        // Find and remove "How it works" banner
-        document.querySelectorAll('span').forEach(span => {
-          const text = (span as HTMLElement).textContent?.trim() || ''
-          if (text === 'How it works') {
-            // Walk up and find the container div to remove
-            let el: HTMLElement | null = span as HTMLElement
-            for (let i = 0; i < 10 && el; i++) {
-              el = el.parentElement as HTMLElement | null
-              if (!el) break
-              // Never remove anything that contains the Buy buttons.
-              if (el.querySelector?.('.trading-button')) {
-                return
+        // Find and remove/hide "How it works" banner.
+        // IMPORTANT: Some Polymarket layouts render "How it works" inside the *same fixed bar*
+        // container as the Buy buttons. In those cases, we must hide only the banner sub-tree,
+        // never the entire fixed container.
+        const howSpans = Array.from(document.querySelectorAll('span')).filter(
+          s => ((s as HTMLElement).textContent?.trim() || '') === 'How it works'
+        ) as HTMLElement[]
+
+        for (const span of howSpans) {
+          // First: hide the closest clickable/container element (surgical).
+          const clickable =
+            (span.closest('button') as HTMLElement | null) ||
+            (span.closest('a') as HTMLElement | null) ||
+            (span.parentElement as HTMLElement | null)
+
+          if (clickable) {
+            if (clickable.querySelector('.trading-button')) {
+              // Shared container with buy buttons — hide only the text + its immediate wrapper(s).
+              span.style.setProperty('display', 'none', 'important')
+              let p: HTMLElement | null = span.parentElement as HTMLElement | null
+              for (let i = 0; i < 4 && p; i++) {
+                if (!p.querySelector('.trading-button')) {
+                  p.style.setProperty('display', 'none', 'important')
+                  break
+                }
+                p = p.parentElement as HTMLElement | null
               }
-              // Check if this looks like the banner container
-              const classes = el.className || ''
-              if (classes.includes('rounded-t-lg') ||
-                  classes.includes('bg-background') ||
-                  (classes.includes('border-t') && classes.includes('py-3'))) {
-                console.log('[DEBUG] Final pass: removing', classes)
-                el.remove()
-                return
-              }
+            } else {
+              clickable.style.setProperty('display', 'none', 'important')
             }
+          } else {
+            span.style.setProperty('display', 'none', 'important')
           }
-        })
+
+          // Second: try to remove the dedicated banner container if it exists and is safe to remove.
+          let el: HTMLElement | null = span as HTMLElement
+          for (let i = 0; i < 10 && el; i++) {
+            el = el.parentElement as HTMLElement | null
+            if (!el) break
+
+            const classes = el.className || ''
+            const looksLikeBanner =
+              classes.includes('rounded-t-lg') ||
+              classes.includes('lg:hidden') ||
+              (classes.includes('border-t') && classes.includes('py-3')) ||
+              ((el.textContent || '').includes('How it works') && classes.includes('bg-background'))
+
+            if (!looksLikeBanner) continue
+
+            if (el.querySelector('.trading-button')) {
+              // Shared ancestor with buy buttons — already hidden surgically above.
+              break
+            }
+
+            console.log('[DEBUG] Final pass: removing', classes)
+            el.remove()
+            break
+          }
+        }
 
         // Hide "Related" heading - we want Vol row to be right above Buy buttons
         document.querySelectorAll('h3').forEach(h3 => {
