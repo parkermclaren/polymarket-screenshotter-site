@@ -564,14 +564,16 @@ export class PolymarketScreenshotService {
               const text = childEl.textContent?.trim() || ''
               // Hide "How it works" elements
               if (text === 'How it works' || text.includes('How it works')) {
-                let parent = childEl.parentElement
-                while (parent && parent !== navEl) {
-                  const siblings = parent.parentElement?.children
-                  if (siblings && siblings.length > 1) {
-                    parent.style.display = 'none'
-                    break
-                  }
-                  parent = parent.parentElement
+                // IMPORTANT: Never hide a container that also contains the trading buttons.
+                // Production DOM can nest "How it works" alongside the Buy buttons.
+                const candidate =
+                  (childEl.closest('div.rounded-t-lg') as HTMLElement | null) ||
+                  (childEl.closest('div[class*="rounded-t"]') as HTMLElement | null) ||
+                  (childEl.closest('div[class*="border-t"]') as HTMLElement | null) ||
+                  (childEl.parentElement as HTMLElement | null)
+
+                if (candidate && !candidate.querySelector('.trading-button')) {
+                  candidate.style.display = 'none'
                 }
               }
             })
@@ -580,6 +582,10 @@ export class PolymarketScreenshotService {
             bottomTabs.forEach(tab => {
               let parent = (tab as HTMLElement).parentElement
               while (parent && parent !== navEl) {
+                // Never hide any wrapper that contains the trading buttons.
+                if (parent.querySelector('.trading-button')) {
+                  break
+                }
                 if (parent.parentElement === navEl || parent.parentElement?.parentElement === navEl) {
                   parent.style.display = 'none'
                   break
@@ -741,6 +747,10 @@ export class PolymarketScreenshotService {
             for (let i = 0; i < 10 && el; i++) {
               el = el.parentElement as HTMLElement | null
               if (!el) break
+              // Never remove anything that contains the Buy buttons.
+              if (el.querySelector?.('.trading-button')) {
+                return
+              }
               // Check if this looks like the banner container
               const classes = el.className || ''
               if (classes.includes('rounded-t-lg') ||
@@ -896,6 +906,33 @@ export class PolymarketScreenshotService {
               container.style.setProperty('min-height', '100px', 'important')
               break
             }
+          }
+        }
+
+        // PRODUCTION SAFETY: Ensure the Buy buttons container is visible and fixed at the bottom.
+        // In some layouts, our cleanup can accidentally hide parts of the fixed nav.
+        const btn = document.querySelector('.trading-button') as HTMLElement | null
+        if (btn) {
+          const fixedAncestor = (() => {
+            let el: HTMLElement | null = btn
+            for (let i = 0; i < 12 && el; i++) {
+              const style = window.getComputedStyle(el)
+              if (style.position === 'fixed') return el
+              el = el.parentElement as HTMLElement | null
+            }
+            return null
+          })()
+
+          const container = fixedAncestor || (btn.closest('nav') as HTMLElement | null)
+          if (container) {
+            container.style.setProperty('display', 'flex', 'important')
+            container.style.setProperty('visibility', 'visible', 'important')
+            container.style.setProperty('opacity', '1', 'important')
+            container.style.setProperty('position', 'fixed', 'important')
+            container.style.setProperty('left', '0', 'important')
+            container.style.setProperty('right', '0', 'important')
+            container.style.setProperty('bottom', '0', 'important')
+            container.style.setProperty('z-index', '99999', 'important')
           }
         }
       })
