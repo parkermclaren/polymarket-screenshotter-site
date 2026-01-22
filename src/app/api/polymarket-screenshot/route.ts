@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
+import type { PolymarketScreenshotService, ScreenshotResult } from '@/polymarket-screenshotter/lib/polymarket-screenshot-service'
 
 export const maxDuration = 60 // Allow up to 60 seconds for screenshot capture
 export const dynamic = 'force-dynamic'
@@ -75,7 +76,7 @@ function getServiceVersion(): string {
   return 'watermark-debug-1'
 }
 
-async function getWarmService() {
+async function getWarmService(): Promise<PolymarketScreenshotService> {
   const SCREENSHOT_SERVICE_VERSION = getServiceVersion()
   
   if (
@@ -162,7 +163,7 @@ export async function POST(request: NextRequest) {
 
     const service = await getWarmService()
 
-    const result = await withSemaphore(() =>
+    const result: ScreenshotResult = await withSemaphore(() =>
       service.captureMarketScreenshot(url, {
         width: width || 700,
         deviceScaleFactor: deviceScaleFactor || 2,
@@ -225,7 +226,7 @@ export async function GET(request: NextRequest) {
 
   const service = await getWarmService()
 
-  const result = await withSemaphore(() =>
+  const result: ScreenshotResult = await withSemaphore(() =>
     service.captureMarketScreenshot(url, {
       width: width ? parseInt(width) : 700,
       deviceScaleFactor: 2,

@@ -14,7 +14,7 @@ interface ScreenshotOptions {
   chartWatermark?: ChartWatermarkMode | boolean // Watermark mode; boolean true maps to 'wordmark'
 }
 
-interface ScreenshotResult {
+export interface ScreenshotResult {
   success: boolean
   screenshot?: Buffer
   fileName?: string
