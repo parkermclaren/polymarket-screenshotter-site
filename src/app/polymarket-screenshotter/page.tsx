@@ -16,7 +16,6 @@ export default function PolymarketScreenshotterPage() {
   const [url, setUrl] = useState('')
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '1d' | '1w' | '1m' | 'max'>('1d')
   const [chartWatermark, setChartWatermark] = useState<'none' | 'wordmark' | 'icon'>('none')
-  const [mode, setMode] = useState<'dom' | 'template'>('dom')
   const [aspect, setAspect] = useState<'twitter' | 'square'>('twitter')
   const [debugLayout, setDebugLayout] = useState(false)
   const [showPotentialPayout, setShowPotentialPayout] = useState(false)
@@ -45,7 +44,6 @@ export default function PolymarketScreenshotterPage() {
         url,
         timeRange,
         return: 'json',
-        mode,
         ...(chartWatermark !== 'none' && { chartWatermark }),
         ...(debugLayout && { debugLayout: '1' }),
         ...(aspect === 'square' && { aspect: 'square' }),
@@ -66,7 +64,7 @@ export default function PolymarketScreenshotterPage() {
     } finally {
       setLoading(false)
     }
-  }, [url, timeRange, chartWatermark, mode, debugLayout, aspect, showPotentialPayout, payoutInvestment])
+  }, [url, timeRange, chartWatermark, debugLayout, aspect, showPotentialPayout, payoutInvestment])
 
   const handleDownload = useCallback(() => {
     if (!result?.imageBase64 || !result?.fileName) return
@@ -215,29 +213,12 @@ export default function PolymarketScreenshotterPage() {
                 id="chart-watermark"
                 value={chartWatermark}
                 onChange={(e) => setChartWatermark(e.target.value as typeof chartWatermark)}
-                disabled={loading || mode === 'template'}
+                disabled={loading}
                 className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 <option value="none">None</option>
                 <option value="wordmark">Wordmark</option>
                 <option value="icon">Icon</option>
-              </select>
-            </div>
-
-            {/* Render Mode */}
-            <div>
-              <label htmlFor="mode" className="block text-sm font-medium text-gray-900 mb-2">
-                Render Mode
-              </label>
-              <select
-                id="mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value as typeof mode)}
-                disabled={loading}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="dom">DOM</option>
-                <option value="template">Template (beta)</option>
               </select>
             </div>
           </div>

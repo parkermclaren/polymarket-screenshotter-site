@@ -106,7 +106,15 @@ export async function styleBuyButtons(page: Page, options: BuyButtonOptions = {}
 
             payoutDiv.innerHTML = `
               <span style="color: #4B5563; font-weight: 500;">${investmentStr}</span>
-              <span style="color: #6B7280; margin: 0 6px; font-weight: 400;">→</span>
+              <span style="
+                color: #6B7280;
+                margin: 0 8px;
+                font-weight: 800;
+                font-size: 24px;
+                line-height: 1;
+                display: inline-block;
+                transform: translateY(1px);
+              ">→</span>
               <span style="color: ${isYes ? '#16a34a' : '#dc2626'}; font-weight: 700; font-size: 20px;">${payoutStr}</span>
             `
             return payoutDiv
