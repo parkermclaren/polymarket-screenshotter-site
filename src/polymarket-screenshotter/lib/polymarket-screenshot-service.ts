@@ -9,6 +9,9 @@ import { styleBuyButtons } from './rules/buy-buttons'
 import { styleAxisLabels } from './rules/axis-labels'
 import { applyDebugOverlay } from './rules/debug-overlay'
 import { selectTimeRange } from './flows/time-range-selection'
+import { styleOutcomeLegend } from './rules/outcome-legend'
+import { cropToEventChart } from './rules/event-chart-crop'
+import { filterChartToSingleOutcome } from './rules/single-outcome-filter'
 
 // Twitter optimal aspect ratio is 7:8 (width:height) for single image posts
 // This means for a given width, height = width * 8/7
@@ -39,81 +42,41 @@ type ClipRect = { x: number; y: number; width: number; height: number }
 /**
  * Extracts the slug/path from a Polymarket URL
  * Handles both /event/ and /market/ URLs
- * Also detects nested markets within events (e.g. /event/election/will-jd-vance-win)
+ *
+ * For nested market URLs like /event/presidential-election-winner-2028/will-jd-vance-win...,
+ * returns both the event slug and the nested market slug.
  */
-function parsePolymarketUrl(url: string): { 
+function parsePolymarketUrl(url: string): {
   valid: boolean
   cleanUrl: string
   slug: string
-  marketSlug?: string
-  targetUrl: string
+  nestedMarketSlug?: string  // Present when URL points to a specific outcome within an event
 } {
   try {
     const parsed = new URL(url)
     if (!parsed.hostname.includes('polymarket.com')) {
-      return { valid: false, cleanUrl: '', slug: '', targetUrl: '' }
+      return { valid: false, cleanUrl: '', slug: '' }
     }
-    
+
     const pathMatch = parsed.pathname.match(/^\/(event|market)\/(.+)/)
     if (!pathMatch) {
-      return { valid: false, cleanUrl: '', slug: '', targetUrl: '' }
+      return { valid: false, cleanUrl: '', slug: '' }
     }
-    
+
     const pathParts = pathMatch[2].split('/').filter(Boolean)
     const slug = pathParts[0] // Main event/market slug
-    const marketSlug = pathParts.length > 1 ? pathParts.slice(1).join('/') : undefined // Nested market slug
-    const cleanUrl = `https://polymarket.com/event/${slug}` // Parent event URL
-    const targetUrl = marketSlug ? `https://polymarket.com/event/${slug}/${marketSlug}` : cleanUrl
-    
-    return { valid: true, cleanUrl, slug, marketSlug, targetUrl }
-  } catch {
-    return { valid: false, cleanUrl: '', slug: '', targetUrl: '' }
-  }
-}
+    const nestedMarketSlug = pathParts[1] // Specific outcome slug (if present)
 
-/**
- * Formats a market slug into a proper title
- * E.g. "will-jd-vance-win-the-2028-us-presidential-election" → "Will JD Vance win the 2028 US Presidential Election?"
- */
-function formatMarketTitleFromSlug(slug: string): string {
-  // Remove trailing hash/ID (e.g. "-P-zEgXjCWbdY")
-  const cleaned = slug.replace(/-[A-Z]-[a-zA-Z0-9]+$/, '')
-  
-  // Replace hyphens with spaces
-  const words = cleaned.split('-').filter(Boolean)
-  
-  // Capitalize appropriately
-  const formatted = words.map((word, idx) => {
-    const lower = word.toLowerCase()
-    // Keep acronyms uppercase
-    if (lower === 'us' || lower === 'uk' || lower === 'eu' || lower === 'aoc') {
-      return word.toUpperCase()
-    }
-    // Capitalize first word
-    if (idx === 0) {
-      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-    }
-    // Keep numbers as-is
-    if (/^\d+$/.test(word)) {
-      return word
-    }
-    // Lowercase common words unless they're proper nouns
-    if (['the', 'a', 'an', 'and', 'or', 'but', 'for', 'in', 'on', 'at', 'to', 'of'].includes(lower)) {
-      return lower
-    }
-    // Check if it looks like a proper noun (all caps or mixed case)
-    if (word === word.toUpperCase() || /[A-Z]/.test(word.slice(1))) {
-      return word.charAt(0).toUpperCase() + word.slice(1)
-    }
-    return word.toLowerCase()
-  }).join(' ')
-  
-  // Add question mark if it starts with a question word
-  if (/^(will|would|should|could|can|is|are|does|do|did|has|have|had)\s/i.test(formatted)) {
-    return formatted.endsWith('?') ? formatted : `${formatted}?`
+    // For nested markets, use the full URL to navigate to the specific outcome
+    // For event-only URLs, use the clean event URL
+    const cleanUrl = nestedMarketSlug
+      ? `https://polymarket.com/event/${slug}/${nestedMarketSlug}`
+      : `https://polymarket.com/event/${slug}`
+
+    return { valid: true, cleanUrl, slug, nestedMarketSlug }
+  } catch {
+    return { valid: false, cleanUrl: '', slug: '' }
   }
-  
-  return formatted
 }
 
 export class PolymarketScreenshotService {
@@ -223,156 +186,6 @@ export class PolymarketScreenshotService {
   }
 
   /**
-   * NESTED MARKET SUPPORT: Click into a specific market within an event page (mobile view).
-   * 
-   * On event pages with multiple markets (e.g. "Presidential Election Winner 2028"),
-   * each candidate has a separate market. On mobile, these are shown as rows that you
-   * can click to see the individual chart. This function finds and clicks that row.
-   * 
-   * @param page - Puppeteer page instance
-   * @param marketSlug - The nested market slug (e.g. "will-jd-vance-win-the-2028-us-presidential-election")
-   */
-  private async clickIntoNestedMarket(page: Page, marketSlug: string): Promise<void> {
-    console.log(`🎯 Clicking into nested market: ${marketSlug}`)
-    
-    // Capture browser console logs for debugging
-    page.on('console', msg => {
-      const text = msg.text()
-      if (text.includes('[NestedMarket]')) {
-        console.log('🌐 Browser:', text)
-      }
-    })
-    
-    const clicked = await page.evaluate(async (slug: string) => {
-      console.log('[NestedMarket] Searching for slug:', slug)
-      
-      // Scroll to bottom to trigger lazy loading of images
-      console.log('[NestedMarket] Scrolling to trigger lazy loading...')
-      window.scrollTo(0, document.body.scrollHeight)
-      await new Promise(r => setTimeout(r, 500))
-      window.scrollTo(0, 0)
-      await new Promise(r => setTimeout(r, 200))
-
-      // Strategy 1: Look for the specific container class structure provided by user
-      // <div class="flex justify-between z-1"> containing the market info
-      const containers = Array.from(document.querySelectorAll('div.flex.justify-between.z-1'))
-      console.log('[NestedMarket] Found candidate containers:', containers.length)
-
-      for (let i = 0; i < containers.length; i++) {
-        const container = containers[i]
-        const el = container as HTMLElement
-        // Check for image with slug inside this container
-        const img = el.querySelector('img')
-        if (img) {
-           const src = img.getAttribute('src') || ''
-           const srcset = img.getAttribute('srcset') || ''
-           console.log(`[NestedMarket] Container ${i}: src="${src.substring(0, 100)}...", srcset="${srcset.substring(0, 100)}..."`)
-           if (src.includes(slug) || srcset.includes(slug)) {
-             console.log('[NestedMarket] ✓ Found matching container via image!')
-             el.scrollIntoView({ block: 'center', inline: 'center' })
-             await new Promise(r => setTimeout(r, 100))
-             el.click()
-             console.log('[NestedMarket] ✓ Clicked container')
-             return true
-           }
-        } else {
-          console.log(`[NestedMarket] Container ${i}: No image found`)
-        }
-      }
-
-      // Strategy 2: Find image with matching slug in src/srcset (Global search)
-      console.log('[NestedMarket] Strategy 2: Searching all images globally...')
-      const images = Array.from(document.querySelectorAll('img[src*="polymarket-upload"], img[srcset*="polymarket-upload"]'))
-      console.log('[NestedMarket] Found', images.length, 'polymarket-upload images')
-      
-      const matchingImage = images.find(img => {
-        const src = img.getAttribute('src') || ''
-        const srcset = img.getAttribute('srcset') || ''
-        return src.includes(slug) || srcset.includes(slug)
-      })
-      
-      if (matchingImage) {
-        console.log('[NestedMarket] ✓ Found matching image globally')
-        // Walk up to find the clickable container
-        let clickable: HTMLElement | null = matchingImage as HTMLElement
-        for (let i = 0; i < 10 && clickable; i++) {
-          clickable = clickable.parentElement as HTMLElement | null
-          if (!clickable) break
-          
-          const classes = clickable.className || ''
-          console.log(`[NestedMarket] Walking up level ${i}, classes: "${classes.substring(0, 80)}"`)
-          // Match the container signature
-          if (
-            (classes.includes('flex') && classes.includes('justify-between')) ||
-            classes.includes('z-1')
-          ) {
-            console.log('[NestedMarket] ✓ Found clickable parent container')
-            clickable.scrollIntoView({ block: 'center', inline: 'center' })
-            await new Promise(r => setTimeout(r, 100))
-            clickable.click()
-            console.log('[NestedMarket] ✓ Clicked via global image match')
-            return true
-          }
-        }
-        console.log('[NestedMarket] ✗ Could not find clickable parent for matching image')
-      } else {
-        console.log('[NestedMarket] ✗ No matching image found in', images.length, 'images')
-      }
-      
-      // Strategy 3: Find link with matching href
-      console.log('[NestedMarket] Strategy 3: Searching links...')
-      const links = Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[]
-      console.log('[NestedMarket] Found', links.length, 'links')
-      const matchingLink = links.find(a => (a.getAttribute('href') || '').includes(slug))
-      if (matchingLink) {
-        console.log('[NestedMarket] ✓ Found matching link')
-        matchingLink.scrollIntoView({ block: 'center', inline: 'center' })
-        await new Promise(r => setTimeout(r, 100))
-        matchingLink.click()
-        console.log('[NestedMarket] ✓ Clicked via link match')
-        return true
-      } else {
-        console.log('[NestedMarket] ✗ No matching link found')
-      }
-      
-      console.log('[NestedMarket] ✗ No matching element found for slug:', slug)
-      return false
-    }, marketSlug)
-    
-    if (!clicked) {
-      console.log('⚠️ Could not find nested market to click')
-      return
-    }
-    
-    console.log('✓ Click executed, waiting for page navigation...')
-    
-    // Wait for the individual market page to load (chart + buy buttons)
-    try {
-      await page.waitForFunction(
-        () => {
-          // Check for buy buttons (individual market view)
-          const buttons = document.querySelectorAll('.trading-button')
-          return buttons.length >= 2
-        },
-        { timeout: 10000 }
-      )
-      console.log('✓ Nested market page loaded (buy buttons detected)')
-      await this.waitForFonts(page)
-    } catch (err) {
-      console.log('⚠️ Buy buttons not detected after clicking nested market:', err instanceof Error ? err.message : 'Unknown error')
-      // Check what we actually have
-      const currentState = await page.evaluate(() => {
-        return {
-          tradingButtons: document.querySelectorAll('.trading-button').length,
-          url: window.location.href,
-          title: document.querySelector('h1')?.textContent || 'No title'
-        }
-      })
-      console.log('📊 Current page state:', JSON.stringify(currentState, null, 2))
-    }
-  }
-
-  /**
    * Compute a 7:8 crop region that guarantees the Buy Yes/Buy No buttons are included.
    * We do this by finding `.trading-button-text` elements and cropping from the title down
    * through the bottom of the Buy buttons.
@@ -462,14 +275,10 @@ export class PolymarketScreenshotService {
       return { success: false, error: 'Browser not initialized' }
     }
 
-    const { valid, cleanUrl, slug, marketSlug, targetUrl } = parsePolymarketUrl(polymarketUrl)
+    const { valid, cleanUrl, slug, nestedMarketSlug } = parsePolymarketUrl(polymarketUrl)
     if (!valid) {
       return { success: false, error: 'Invalid Polymarket URL. Please provide a valid polymarket.com/event/... or polymarket.com/market/... URL' }
     }
-
-    // NESTED MARKET SUPPORT: If a nested market slug exists, we'll format a proper title from it
-    const isNestedMarket = !!marketSlug
-    const titleOverride = isNestedMarket ? formatMarketTitleFromSlug(marketSlug) : null
 
     const page = await this.browser.newPage()
 
@@ -519,25 +328,16 @@ export class PolymarketScreenshotService {
       }
 
       console.log(`📸 Navigating to ${cleanUrl}`)
-      if (isNestedMarket) {
-        console.log(`🎯 This is a nested market, will click into: ${marketSlug}`)
-      }
 
       // Capture browser console logs for debugging
       page.on('console', msg => {
         const text = msg.text()
-        if (text.includes('[DEBUG]') || text.includes('[NestedMarket]')) {
+        if (text.includes('[DEBUG]')) {
           console.log('🌐 Browser:', text)
         }
       })
 
-      // Navigate to the parent event page (or direct market if not nested)
-      // NESTED MARKET SUPPORT: Try navigating directly to the nested market URL first.
-      // This is often more reliable than clicking. If it redirects to the parent, we'll handle that.
-      const urlToLoad = isNestedMarket ? targetUrl : cleanUrl
-      console.log(`🚀 Loading URL: ${urlToLoad}`)
-      
-      await page.goto(urlToLoad, {
+      await page.goto(cleanUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 30000
       })
@@ -546,135 +346,26 @@ export class PolymarketScreenshotService {
       await this.waitForPageLoad(page)
       await this.waitForFonts(page)
 
-      // NESTED MARKET SUPPORT: Click into the specific market if this is a nested market
-      if (isNestedMarket && marketSlug) {
-        // Check if we are already on the nested market page (e.g. single chart vs group chart)
-        // If the page has multiple market rows (event page), we need to click.
-        const isEventPage = await page.evaluate(() => {
-          const imageCount = document.querySelectorAll('img[src*="polymarket-upload"]').length
-          const tradingButtons = document.querySelectorAll('.trading-button').length
-          return {
-            imageCount,
-            tradingButtons,
-            isEventPage: imageCount > 5,
-            url: window.location.href,
-            title: document.querySelector('h1')?.textContent || 'No title'
-          }
-        })
-        
-        console.log('📊 Page state after navigation:', JSON.stringify(isEventPage, null, 2))
-
-        if (isEventPage.isEventPage) {
-          console.log('ℹ️ Landed on event page (multiple markets detected), attempting to click into nested market...')
-          await this.clickIntoNestedMarket(page, marketSlug)
-          // Give the new page a moment to settle
-          await this.waitForFonts(page)
-          
-          // Verify we're now on the individual market page
-          const afterClickState = await page.evaluate(() => {
-            return {
-              tradingButtons: document.querySelectorAll('.trading-button').length,
-              url: window.location.href,
-              title: document.querySelector('h1')?.textContent || 'No title',
-              chartExists: !!document.querySelector('#group-chart-container')
-            }
-          })
-          console.log('📊 Page state after click:', JSON.stringify(afterClickState, null, 2))
-        } else {
-          console.log('✓ Appears to be on nested market page already (single market detected)')
-        }
-        
-        // Verify buy buttons now exist after clicking in
-        console.log('⏳ Verifying buy buttons appeared after clicking into nested market...')
-        try {
-          await page.waitForFunction(
-            () => {
-              const texts = Array.from(document.querySelectorAll('.trading-button-text'))
-              const buyLabels = texts
-                .map(t => (t.textContent || '').trim().toLowerCase())
-                .filter(t => t.startsWith('buy '))
-              return buyLabels.length >= 2
-            },
-            { timeout: 8000 }
-          )
-          console.log('✓ Buy buttons found after nested market click')
-        } catch {
-          return {
-            success: false,
-            error: `Could not find buy buttons after clicking into nested market "${marketSlug}". The market may not exist or failed to load.`
-          }
-        }
-      }
-
       // Get the page title for metadata
       const marketTitle = await page.title()
-      const cleanTitle = titleOverride || marketTitle.replace(' Betting Odds & Predictions | Polymarket', '').trim()
+      const cleanTitle = marketTitle.replace(' Betting Odds & Predictions | Polymarket', '').trim()
 
-      // FIRST: Wait for Buy buttons to exist before any DOM manipulation
-      // Some markets are not Yes/No; they can be "Buy US" / "Buy Israel", etc.
-      // NOTE: For nested markets, buy buttons won't exist yet (they appear after clicking in)
-      if (!isNestedMarket) {
-        console.log('⏳ Waiting for Buy buttons to appear...')
-        try {
-          await page.waitForFunction(
-            () => {
-              const texts = Array.from(document.querySelectorAll('.trading-button-text'))
-              const buyLabels = texts
-                .map(t => (t.textContent || '').trim().toLowerCase())
-                .filter(t => t.startsWith('buy '))
-              return buyLabels.length >= 2
-            },
-            { timeout: 8000 }
-          )
-          console.log('✓ Buy buttons found')
-        } catch {
-          console.log('⚠️ Buy buttons not found - may be a multi-market event page')
-          return {
-            success: false,
-            error: 'This appears to be a multi-market event page. Please use a direct market URL or provide a specific market within the event (e.g., /event/election/candidate-name).'
-          }
-        }
-      } else {
-        console.log('ℹ️ Nested market detected - buy buttons will appear after clicking in')
+      // Wait for chart to be ready (works for both single markets and multi-outcome event pages)
+      console.log('⏳ Waiting for chart to load...')
+      try {
+        await page.waitForFunction(
+          () => {
+            // Look for chart container or canvas element
+            const chart = document.querySelector('#group-chart-container, canvas, [class*="recharts"]')
+            return !!chart
+          },
+          { timeout: 10000 }
+        )
+        console.log('✓ Chart loaded')
+      } catch {
+        console.log('⚠️ Chart not found, continuing anyway...')
       }
       await this.waitForFonts(page)
-
-      // DEBUG: Check what we actually have
-      const debugInfo = await page.evaluate(() => {
-        const tradingButtons = document.querySelectorAll('.trading-button')
-        const buttonTexts = document.querySelectorAll('.trading-button-text')
-        
-        const info: Record<string, unknown> = {
-          tradingButtonCount: tradingButtons.length,
-          buttonTextCount: buttonTexts.length,
-          buttonTexts: Array.from(buttonTexts).map(b => (b as HTMLElement).textContent?.trim()),
-        }
-        
-        // Find the first trading button and trace its position
-        if (tradingButtons.length > 0) {
-          const btn = tradingButtons[0] as HTMLElement
-          const rect = btn.getBoundingClientRect()
-          const style = window.getComputedStyle(btn)
-          
-          info.firstButtonRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-          info.firstButtonDisplay = style.display
-          info.firstButtonVisibility = style.visibility
-          
-          // Check parents
-          let parent = btn.parentElement
-          let parentChain: string[] = []
-          while (parent && parentChain.length < 10) {
-            const ps = window.getComputedStyle(parent)
-            parentChain.push(`${parent.tagName}.${parent.className?.split(' ')[0] || ''} (display:${ps.display}, position:${ps.position})`)
-            if (ps.display === 'none') break
-            parent = parent.parentElement
-          }
-          info.parentChain = parentChain
-        }
-        
-        return info
-      })
-      console.log('🔍 DEBUG Buy buttons:', JSON.stringify(debugInfo, null, 2))
 
       // DOM manipulation for clean screenshot
       const chartWatermark: ChartWatermarkMode =
@@ -686,7 +377,7 @@ export class PolymarketScreenshotService {
       console.log('[DEBUG] chartWatermark option:', chartWatermark)
       
       // Store watermark mode for later retrieval
-      await page.evaluate((mode: ChartWatermarkMode, titleText: string | null) => {
+      await page.evaluate((mode: ChartWatermarkMode) => {
         document.documentElement.setAttribute('data-chart-watermark', mode)
         // FORCE LIGHT MODE
         document.documentElement.classList.remove('dark')
@@ -695,20 +386,12 @@ export class PolymarketScreenshotService {
         document.documentElement.style.colorScheme = 'light'
         document.body.classList.remove('dark')
         document.body.classList.add('light')
-
-        // NESTED MARKET SUPPORT: Override title text if provided (e.g. "Will JD Vance win?" instead of "JD Vance")
-        if (titleText) {
-          const title = document.querySelector('h1') as HTMLElement | null
-          if (title) {
-            title.textContent = titleText
-            console.log('[DEBUG] Title overridden to:', titleText)
-          }
-        }
-      }, chartWatermark, titleOverride)
+      }, chartWatermark)
       
       // Apply all layout rules
       await hideUnwantedElements(page)
       await styleHeader(page)
+      await styleOutcomeLegend(page)
       await adjustHeightForDateChips(page, { baseChartHeight: 400 })
       await applyChartWatermark(page, chartWatermark)
 
@@ -778,14 +461,265 @@ export class PolymarketScreenshotService {
         console.log('🧩 Watermark overlay present before screenshot:', !!hasWatermark)
       }
 
-      console.log('📸 Taking viewport screenshot (should include fixed Buy bar at bottom)...')
+      // Handle multi-outcome event pages:
+      // - If a specific outcome URL was provided, filter the chart to just that outcome
+      // - Otherwise, show all outcomes and add a generic Trade button
+      if (nestedMarketSlug) {
+        // Specific outcome URL: filter chart to single outcome, keep normal Yes/No buttons
+        const filtered = await filterChartToSingleOutcome(page, nestedMarketSlug)
+        if (filtered) {
+          console.log('📊 Filtered chart to single outcome:', nestedMarketSlug)
+          // Wait for chart to update after filtering
+          await new Promise(resolve => setTimeout(resolve, 200))
+          
+          // Hide all outcome cards except the target one (matching the nestedMarketSlug)
+          await page.evaluate((targetSlug: string) => {
+            // Helper function to find the chart container
+            const findChartContainer = (): HTMLElement | null => {
+              const byId = document.querySelector('#group-chart-container') as HTMLElement | null
+              if (byId) return byId
+              const byTestId = document.querySelector('[data-testid="chart-container"]') as HTMLElement | null
+              if (byTestId) return byTestId
+              const byClass = document.querySelector('[class*="chart-container"]') as HTMLElement | null
+              if (byClass) return byClass
+              const byChartSvg = document.querySelector(
+                '#group-chart-container svg, svg[class*="chart"], svg[class*="recharts"], svg[class*="visx"]'
+              ) as SVGElement | null
+              if (byChartSvg) {
+                return (byChartSvg.closest('div') as HTMLElement | null) || (byChartSvg.parentElement as HTMLElement | null)
+              }
+              return null
+            }
+            
+            // Find ALL outcome cards (each has group, border-b, py-4 classes and contains Buy Yes/No buttons)
+            const findAllOutcomeCards = (): HTMLElement[] => {
+              const cards: HTMLElement[] = []
+              const allButtons = Array.from(document.querySelectorAll('button'))
+              const buyButtons = allButtons.filter(btn => {
+                const text = (btn.textContent || '').toLowerCase()
+                const hasBuyText = text.includes('buy yes') || text.includes('buy no')
+                const isNotTradingButton = !btn.classList.contains('trading-button')
+                return hasBuyText && isNotTradingButton
+              })
+              
+              for (const btn of buyButtons) {
+                let parent: HTMLElement | null = btn
+                for (let i = 0; i < 10 && parent; i++) {
+                  parent = parent.parentElement as HTMLElement | null
+                  if (!parent) break
+                  const classes = parent.className || ''
+                  if (classes.includes('group') && classes.includes('border-b') && classes.includes('py-4')) {
+                    if (!cards.includes(parent)) {
+                      cards.push(parent)
+                    }
+                    break
+                  }
+                }
+              }
+              
+              return cards
+            }
+
+            const allCards = findAllOutcomeCards()
+            console.log(`[NESTED_MARKET] Found ${allCards.length} outcome cards total`)
+            console.log(`[NESTED_MARKET] Looking for target slug: ${targetSlug}`)
+            
+            // Find the target card by matching the slug in image URLs or card content
+            let targetCard: HTMLElement | null = null
+            
+            for (const card of allCards) {
+              // Method 1: Check if this card contains an image with our target slug in srcset/src
+              const imgs = card.querySelectorAll('img')
+              for (const img of imgs) {
+                const srcset = img.getAttribute('srcset') || ''
+                const src = img.getAttribute('src') || ''
+                // Decode URL-encoded strings for matching
+                const decodedSrcset = decodeURIComponent(srcset)
+                const decodedSrc = decodeURIComponent(src)
+                
+                if (decodedSrcset.includes(targetSlug) || decodedSrc.includes(targetSlug) ||
+                    srcset.includes(targetSlug) || src.includes(targetSlug)) {
+                  targetCard = card
+                  console.log('[NESTED_MARKET] Found target card via image src match')
+                  break
+                }
+              }
+              if (targetCard) break
+              
+              // Method 2: Check if the card's title matches keywords from the slug
+              // e.g., slug "will-gavin-newsom-win..." should match card with title "Gavin Newsom"
+              const titleEl = card.querySelector('p.font-semibold') as HTMLElement | null
+              if (titleEl) {
+                const title = (titleEl.textContent || '').toLowerCase().trim()
+                // Convert slug to searchable keywords (e.g., "will-gavin-newsom-win" -> ["gavin", "newsom"])
+                const slugWords = targetSlug.toLowerCase().split('-').filter(w => 
+                  w.length > 3 && !['will', 'win', 'the', 'and', 'for'].includes(w)
+                )
+                // Check if most significant words from slug appear in the title
+                const matchingWords = slugWords.filter(word => title.includes(word))
+                if (matchingWords.length >= 2) {
+                  targetCard = card
+                  console.log(`[NESTED_MARKET] Found target card via title match: "${title}" matches [${matchingWords.join(', ')}]`)
+                  break
+                }
+              }
+            }
+            
+            // Fallback: if we have cards but couldn't match, log more details and use first one
+            if (!targetCard && allCards.length > 0) {
+              console.log('[NESTED_MARKET] Could not match target slug to any card')
+              // Log what cards we have for debugging
+              allCards.forEach((card, idx) => {
+                const title = card.querySelector('p.font-semibold')?.textContent || 'Unknown'
+                const img = card.querySelector('img')
+                const src = img?.getAttribute('src') || 'No image'
+                console.log(`[NESTED_MARKET] Card ${idx}: "${title}", src: ${src.substring(0, 80)}...`)
+              })
+              targetCard = allCards[0]
+              console.log('[NESTED_MARKET] Using first card as target (fallback)')
+            }
+            
+            if (!targetCard) {
+              console.log('[NESTED_MARKET] No target outcome card found')
+              return
+            }
+            
+            // HIDE all other cards except the target
+            let hiddenCount = 0
+            for (const card of allCards) {
+              if (card !== targetCard) {
+                card.style.setProperty('display', 'none', 'important')
+                hiddenCount++
+              }
+            }
+            console.log(`[NESTED_MARKET] Hidden ${hiddenCount} non-target outcome cards`)
+            
+            // Also hide any content that appears AFTER the target card
+            let sibling = targetCard.nextElementSibling as HTMLElement | null
+            while (sibling) {
+              sibling.style.setProperty('display', 'none', 'important')
+              sibling = sibling.nextElementSibling as HTMLElement | null
+            }
+            
+            // ENLARGE the target outcome card elements to make them more prominent
+            // 1. Enlarge the market icon/image
+            const marketImg = targetCard.querySelector('img[alt="Market icon"]') as HTMLImageElement | null
+            if (marketImg) {
+              const imgContainer = marketImg.closest('div.relative.rounded-sm.overflow-hidden') as HTMLElement | null
+              if (imgContainer) {
+                const newSize = '64px' // Up from 40px
+                imgContainer.style.setProperty('width', newSize, 'important')
+                imgContainer.style.setProperty('height', newSize, 'important')
+                imgContainer.style.setProperty('min-width', newSize, 'important')
+              }
+            }
+            
+            // 2. Enlarge the title text (e.g., "Gavin Newsom")
+            const titleEl = targetCard.querySelector('p.font-semibold') as HTMLElement | null
+            if (titleEl) {
+              titleEl.style.setProperty('font-size', '24px', 'important')
+              titleEl.style.setProperty('line-height', '1.2', 'important')
+            }
+            
+            // 3. Enlarge the percentage (e.g., "20%")
+            const percentageEl = targetCard.querySelector('p.text-\\[28px\\]') as HTMLElement | null
+              || targetCard.querySelector('p[class*="text-[28px]"]') as HTMLElement | null
+            if (percentageEl) {
+              percentageEl.style.setProperty('font-size', '40px', 'important')
+              percentageEl.style.setProperty('line-height', '1.1', 'important')
+            }
+            
+            // 4. Enlarge the volume text (e.g., "$3,582,706 Vol.")
+            const volumeSpan = Array.from(targetCard.querySelectorAll('span')).find(span =>
+              (span as HTMLElement).textContent?.includes('Vol.')
+            ) as HTMLElement | null
+            if (volumeSpan) {
+              volumeSpan.style.setProperty('font-size', '15px', 'important')
+            }
+            
+            // 5. Enlarge the Buy Yes/Buy No buttons
+            const buyButtonsContainer = targetCard.querySelector('div.flex.justify-end.gap-3') as HTMLElement | null
+            if (buyButtonsContainer) {
+              const buttons = buyButtonsContainer.querySelectorAll('button')
+              buttons.forEach(btn => {
+                const button = btn as HTMLElement
+                button.style.setProperty('height', '56px', 'important') // Up from h-11 (44px)
+                button.style.setProperty('font-size', '18px', 'important')
+                button.style.setProperty('font-weight', '600', 'important')
+                button.style.setProperty('padding', '0 24px', 'important')
+              })
+            }
+            
+            // 6. Add more vertical padding to the card itself
+            targetCard.style.setProperty('padding-top', '20px', 'important')
+            targetCard.style.setProperty('padding-bottom', '20px', 'important')
+            
+            // Force browser reflow before measuring by accessing offsetHeight
+            targetCard.offsetHeight
+            
+            console.log('[NESTED_MARKET] Enlarged target card elements')
+            
+            // Now adjust chart height to fit the enlarged target card cleanly (7:8 aspect ratio)
+            const chartContainer = findChartContainer()
+            if (!chartContainer) {
+              console.log('[NESTED_MARKET] Chart container not found')
+              return
+            }
+            
+            // Re-measure after enlarging the target card
+            const cardRect = targetCard.getBoundingClientRect()
+            const cardBottom = cardRect.bottom
+            const viewportHeight = window.innerHeight
+            const buffer = 8 // Small padding from bottom of viewport
+            
+            console.log(`[NESTED_MARKET] Target card bottom: ${Math.round(cardBottom)}, Viewport height: ${viewportHeight}`)
+            
+            if (cardBottom > viewportHeight - buffer) {
+              // The card is cut off - we need to shrink the chart
+              const overflow = cardBottom - (viewportHeight - buffer)
+              const currentHeight = Math.round(chartContainer.getBoundingClientRect().height)
+              // Shrink chart by the overflow amount plus small extra margin
+              const newHeight = Math.max(160, Math.round(currentHeight - overflow - 8))
+              
+              console.log(`[NESTED_MARKET] Overflow: ${Math.round(overflow)}px, Reducing chart from ${currentHeight}px to ${newHeight}px`)
+              
+              chartContainer.style.setProperty('--chart-height', `${newHeight}px`, 'important')
+              chartContainer.style.setProperty('height', `${newHeight}px`, 'important')
+              chartContainer.style.setProperty('min-height', `${newHeight}px`, 'important')
+              
+              const chartSvg = chartContainer.querySelector('svg') as SVGElement | null
+              if (chartSvg) {
+                chartSvg.setAttribute('height', `${newHeight}`)
+                chartSvg.style.setProperty('height', `${newHeight}px`, 'important')
+              }
+            } else {
+              console.log(`[NESTED_MARKET] Target card fits in viewport (bottom: ${Math.round(cardBottom)}, viewport: ${viewportHeight})`)
+            }
+          }, nestedMarketSlug)
+          
+          // Small wait for layout to settle after chart adjustment
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      } else {
+        // Event-only URL: show all outcomes with Trade button
+        const isMultiOutcome = await cropToEventChart(page)
+        if (isMultiOutcome) {
+          console.log('📊 Multi-outcome event detected, added Trade button')
+          // Small wait for the Trade button to render
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+      }
+
+      // NOTE: We do NOT resize the viewport for 7:8 screenshots based on content height.
+      // The user prefers the fixed 7:8 aspect ratio even if there is whitespace.
+      // The Trade button will be fixed at the bottom of the 7:8 viewport.
+
+      console.log('📸 Taking viewport screenshot...')
       const screenshot = await page.screenshot({
         type: 'png'
       })
 
-      // Use the nested market slug for filename if available (more specific)
-      const fileSlug = marketSlug || slug
-      const fileName = `polymarket-${fileSlug}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`
+      const fileName = `polymarket-${slug}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`
 
       console.log(`✅ Screenshot captured: ${fileName}`)
 
@@ -794,7 +728,7 @@ export class PolymarketScreenshotService {
         screenshot: Buffer.from(screenshot),
         fileName,
         marketTitle: cleanTitle,
-        url: targetUrl // Use the target URL (nested market URL if applicable)
+        url: cleanUrl
       }
 
     } catch (error) {

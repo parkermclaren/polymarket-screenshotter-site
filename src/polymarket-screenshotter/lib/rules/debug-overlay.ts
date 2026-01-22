@@ -53,6 +53,11 @@ export async function applyDebugOverlay(page: Page): Promise<void> {
       const uniqueChips = Array.from(new Set(chipCandidates))
       if (uniqueChips.length < 2) return null
 
+      const chipRects = uniqueChips
+        .map(chip => chip.getBoundingClientRect())
+        .filter(rect => rect.height >= 24 && rect.height <= 44)
+      if (chipRects.length < 2) return null
+
       let el: HTMLElement | null = uniqueChips[0]
       for (let i = 0; i < 8 && el; i++) {
         const current = el
@@ -73,16 +78,28 @@ export async function applyDebugOverlay(page: Page): Promise<void> {
         }
         el = current.parentElement as HTMLElement | null
       }
-      const fallback =
-        (uniqueChips[0].closest('div.py-4') as HTMLElement | null) ||
-        (uniqueChips[0].closest('div[class*="py-"]') as HTMLElement | null) ||
-        (uniqueChips[0].parentElement as HTMLElement | null)
-      return fallback
+      return null
     }
 
-    const chipsRow = getChipsRow()
-
     const chartContainer = findChartContainer()
+    const chipsRow = getChipsRow()
+    if (chipsRow && chartContainer) {
+      const chartRect = chartContainer.getBoundingClientRect()
+      const chipsRect = chipsRow.getBoundingClientRect()
+      if (chipsRect.bottom >= chartRect.top - 4) {
+        // Ignore false positives below/overlapping the chart
+        return
+      }
+      if (chartRect.top - chipsRect.bottom > 120) {
+        return
+      }
+      const chipTexts = Array.from(chipsRow.querySelectorAll('.rounded-full'))
+        .map(el => (el as HTMLElement).textContent?.trim() || '')
+        .filter(text => text === 'Past' || monthRe.test(text))
+      if (chipTexts.length < 2 || chipsRect.height < 36) {
+        return
+      }
+    }
     const volText = Array.from(document.querySelectorAll('p')).find(p =>
       ((p as HTMLElement).textContent || '').includes('Vol.')
     ) as HTMLElement | undefined

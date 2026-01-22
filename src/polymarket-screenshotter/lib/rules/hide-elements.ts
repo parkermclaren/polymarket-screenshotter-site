@@ -46,6 +46,34 @@ export async function hideUnwantedElements(page: Page): Promise<void> {
       }
     })
 
+    // Hide the "Add a comment" composer (often shown without a "Comments" header)
+    const commentInputs = Array.from(
+      document.querySelectorAll('input[placeholder*="comment" i], textarea[placeholder*="comment" i]')
+    ) as HTMLElement[]
+    commentInputs.forEach(input => {
+      const container =
+        (input.closest('div[role="group"]') as HTMLElement | null) ||
+        (input.closest('form') as HTMLElement | null) ||
+        (input.closest('div') as HTMLElement | null)
+      if (container) {
+        container.style.display = 'none'
+      }
+    })
+
+    // Hide any visible "Add a comment" text block
+    document.querySelectorAll('div, span, p').forEach(el => {
+      const text = (el as HTMLElement).textContent?.trim().toLowerCase() || ''
+      if (text === 'add a comment') {
+        const container =
+          (el.closest('div[role="group"]') as HTMLElement | null) ||
+          (el.closest('form') as HTMLElement | null) ||
+          (el.closest('div') as HTMLElement | null)
+        if (container) {
+          container.style.display = 'none'
+        }
+      }
+    })
+
     // HIDE FIXED BOTTOM NAV ELEMENTS (keep only Buy buttons)
     const fixedNavs = Array.from(document.querySelectorAll('nav')).filter(nav => {
       const style = window.getComputedStyle(nav as HTMLElement)

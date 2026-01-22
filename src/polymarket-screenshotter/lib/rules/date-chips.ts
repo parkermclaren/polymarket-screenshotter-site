@@ -1,11 +1,26 @@
 import { Page } from 'puppeteer'
 
+interface DateChipsOptions {
+  baseChartHeight?: number
+  minChartHeight?: number
+  minReduce?: number
+  maxReduce?: number
+}
+
 /**
  * Detects the presence of a "Past" or date chips row (e.g. "Mar 31", "Dec 31")
  * and adjusts the chart height to prevent layout overlap.
  */
-export async function adjustHeightForDateChips(page: Page): Promise<void> {
-  await page.evaluate(() => {
+export async function adjustHeightForDateChips(page: Page, options: DateChipsOptions = {}): Promise<void> {
+  const {
+    baseChartHeight = 400,
+    minChartHeight = 300,
+    minReduce = 28,
+    maxReduce = 90,
+  } = options
+
+  await page.evaluate(
+    ({ baseChartHeight, minChartHeight, minReduce, maxReduce }) => {
     const monthRe = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}$/i
     
     const getChipsRow = (): HTMLElement | null => {
@@ -20,6 +35,12 @@ export async function adjustHeightForDateChips(page: Page): Promise<void> {
 
       const uniqueChips = Array.from(new Set(chipCandidates))
       if (uniqueChips.length < 2) return null
+
+      // Ensure chips look like actual date chips (height around 28-40px)
+      const chipRects = uniqueChips
+        .map(chip => chip.getBoundingClientRect())
+        .filter(rect => rect.height >= 24 && rect.height <= 44)
+      if (chipRects.length < 2) return null
 
       let el: HTMLElement | null = uniqueChips[0]
       for (let i = 0; i < 8 && el; i++) {
@@ -41,17 +62,11 @@ export async function adjustHeightForDateChips(page: Page): Promise<void> {
         }
         el = current.parentElement as HTMLElement | null
       }
-      
-      const fallback =
-        (uniqueChips[0].closest('div.py-4') as HTMLElement | null) ||
-        (uniqueChips[0].closest('div[class*="py-"]') as HTMLElement | null) ||
-        (uniqueChips[0].parentElement as HTMLElement | null)
-      return fallback
+
+      return null
     }
 
-    const chipsRow = getChipsRow()
-    if (chipsRow) {
-      const findChartContainer = (): HTMLElement | null => {
+    const findChartContainer = (): HTMLElement | null => {
         const byId = document.querySelector('#group-chart-container') as HTMLElement | null
         if (byId) return byId
         const byTestId = document.querySelector('[data-testid="chart-container"]') as HTMLElement | null
@@ -67,23 +82,43 @@ export async function adjustHeightForDateChips(page: Page): Promise<void> {
         return null
       }
 
-      const chartContainer = findChartContainer()
-      if (chartContainer) {
-        const baseChartHeight = 400
-        const chipsHeight = Math.round(chipsRow.getBoundingClientRect().height)
-        const reduceBy = Math.min(90, Math.max(28, chipsHeight))
-        const newChartHeight = `${Math.max(300, baseChartHeight - reduceBy)}px`
-        
-        chartContainer.style.setProperty('--chart-height', newChartHeight, 'important')
-        chartContainer.style.setProperty('height', newChartHeight, 'important')
-        chartContainer.style.setProperty('min-height', newChartHeight, 'important')
-        
-        const chartSvg = chartContainer.querySelector('svg') as SVGElement | null
-        if (chartSvg) {
-          chartSvg.setAttribute('height', newChartHeight.replace('px', ''))
-          chartSvg.style.setProperty('height', newChartHeight, 'important')
-        }
-      }
+    const chartContainer = findChartContainer()
+    if (!chartContainer) return
+
+    let reduceBy = 0
+    const chipsRow = getChipsRow()
+    if (chipsRow) {
+      const chartRect = chartContainer.getBoundingClientRect()
+      const chipsRect = chipsRow.getBoundingClientRect()
+
+      // Guardrails: ensure chips row is above the chart and close enough to be relevant
+      if (chipsRect.bottom >= chartRect.top - 4) return
+      if (chartRect.top - chipsRect.bottom > 120) return
+
+      // Require at least two visible chips inside the detected row
+      const chipTexts = Array.from(chipsRow.querySelectorAll('.rounded-full'))
+        .map(el => (el as HTMLElement).textContent?.trim() || '')
+        .filter(text => text === 'Past' || monthRe.test(text))
+      if (chipTexts.length < 2) return
+
+      if (chipsRect.height < 36) return
+
+      const chipsHeight = Math.round(chipsRect.height)
+      reduceBy = Math.min(maxReduce, Math.max(minReduce, chipsHeight))
     }
-  })
+
+    const newChartHeight = `${Math.max(minChartHeight, baseChartHeight - reduceBy)}px`
+
+    chartContainer.style.setProperty('--chart-height', newChartHeight, 'important')
+    chartContainer.style.setProperty('height', newChartHeight, 'important')
+    chartContainer.style.setProperty('min-height', newChartHeight, 'important')
+
+    const chartSvg = chartContainer.querySelector('svg') as SVGElement | null
+    if (chartSvg) {
+      chartSvg.setAttribute('height', newChartHeight.replace('px', ''))
+      chartSvg.style.setProperty('height', newChartHeight, 'important')
+    }
+  },
+  { baseChartHeight, minChartHeight, minReduce, maxReduce }
+  )
 }
