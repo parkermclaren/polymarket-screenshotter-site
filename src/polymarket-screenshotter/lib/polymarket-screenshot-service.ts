@@ -135,6 +135,28 @@ export class PolymarketScreenshotService {
   }
 
   /**
+   * Ensure web fonts have finished loading before measuring/cropping.
+   * Font swaps can shift layout on slower environments (e.g. prod containers).
+   */
+  private async waitForFonts(page: Page): Promise<void> {
+    try {
+      await page.waitForFunction(
+        () => {
+          const fonts = (document as unknown as { fonts?: { status?: string } }).fonts
+          return !fonts || fonts.status === 'loaded'
+        },
+        { timeout: 5000 }
+      )
+      // Allow a couple of frames for layout to settle after fonts load.
+      await page.evaluate(
+        () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      )
+    } catch {
+      console.log('⚠️ Font loading check timed out, continuing...')
+    }
+  }
+
+  /**
    * Compute a 7:8 crop region that guarantees the Buy Yes/Buy No buttons are included.
    * We do this by finding `.trading-button-text` elements and cropping from the title down
    * through the bottom of the Buy buttons.
@@ -293,23 +315,27 @@ export class PolymarketScreenshotService {
 
       // Wait for page to fully load
       await this.waitForPageLoad(page)
+      await this.waitForFonts(page)
 
       // Get the page title for metadata
       const marketTitle = await page.title()
       const cleanTitle = marketTitle.replace(' Betting Odds & Predictions | Polymarket', '').trim()
 
       // FIRST: Wait for Buy buttons to exist before any DOM manipulation
+      // Some markets are not Yes/No; they can be "Buy US" / "Buy Israel", etc.
       console.log('⏳ Waiting for Buy buttons to appear...')
       await page.waitForFunction(
         () => {
           const texts = Array.from(document.querySelectorAll('.trading-button-text'))
-          const hasYes = texts.some(t => (t.textContent || '').trim().toLowerCase().startsWith('buy yes'))
-          const hasNo = texts.some(t => (t.textContent || '').trim().toLowerCase().startsWith('buy no'))
-          return hasYes && hasNo
+          const buyLabels = texts
+            .map(t => (t.textContent || '').trim().toLowerCase())
+            .filter(t => t.startsWith('buy '))
+          return buyLabels.length >= 2
         },
         { timeout: 20000 }
       )
       console.log('✓ Buy buttons found')
+      await this.waitForFonts(page)
 
       // DEBUG: Check what we actually have
       const debugInfo = await page.evaluate(() => {
@@ -1110,6 +1136,29 @@ export class PolymarketScreenshotService {
           }
         }
       })
+      // Some runs inject the banner a beat later; do a short second pass.
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await page.evaluate(() => {
+        const hideElement = (el: HTMLElement | null) => {
+          if (!el) return
+          el.style.setProperty('display', 'none', 'important')
+        }
+
+        const howTargets = Array.from(document.querySelectorAll('button, a, span, div'))
+          .filter(el => /how it works/i.test((el as HTMLElement).textContent || '')) as HTMLElement[]
+
+        howTargets.forEach(target => {
+          const button = target.closest('button') as HTMLElement | null
+          const link = target.closest('a') as HTMLElement | null
+          const candidate = button || link || target
+
+          if (candidate.querySelector('.trading-button')) {
+            hideElement(target)
+          } else {
+            hideElement(candidate)
+          }
+        })
+      })
 
       // Click the desired time range tab (default to 1D for better x-axis labels)
       const timeRange = options.timeRange || '6h'
@@ -1127,12 +1176,26 @@ export class PolymarketScreenshotService {
             
             // Smart wait: Click and wait for network to settle (data fetch)
             // We expect a data fetch for the new time range
-            await Promise.all([
-              tab.click(),
-              page.waitForNetworkIdle({ idleTime: 300, timeout: 4000 }).catch(() => console.log('⚠️ Network idle timeout after tab click'))
-            ])
-            
-            console.log(`✓ Clicked ${timeRange.toUpperCase()} tab and data loaded`)
+            await tab.evaluate(el => {
+              ;(el as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' })
+            })
+
+            let clickMethod: 'puppeteer' | 'dom' = 'puppeteer'
+            try {
+              await tab.click({ delay: 20 })
+            } catch (clickErr) {
+              clickMethod = 'dom'
+              console.log('⚠️ Puppeteer click failed, falling back to DOM click:', clickErr)
+              await tab.evaluate(el => {
+                ;(el as HTMLElement).click()
+              })
+            }
+
+            await page
+              .waitForNetworkIdle({ idleTime: 300, timeout: 4000 })
+              .catch(() => console.log('⚠️ Network idle timeout after tab click'))
+
+            console.log(`✓ Clicked ${timeRange.toUpperCase()} tab via ${clickMethod} and data loaded`)
             break
           }
         }
@@ -1338,6 +1401,15 @@ export class PolymarketScreenshotService {
       // Extra wait to ensure axis labels are fully rendered after manipulation
       // Reduced from 500ms - manipulation is synchronous, just need paint
       await new Promise(resolve => setTimeout(resolve, 50))
+
+      // The time range click scrolls the chart into view.
+      // Reset to top before final capture so title/header are included.
+      await page.evaluate(() => {
+        const active = document.activeElement as HTMLElement | null
+        if (active && typeof active.blur === 'function') active.blur()
+        window.scrollTo(0, 0)
+      })
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Node-side debug: ensure watermark exists right before screenshot
       if (chartWatermark !== 'none') {

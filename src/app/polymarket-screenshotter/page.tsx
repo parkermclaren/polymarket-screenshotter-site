@@ -16,6 +16,7 @@ export default function PolymarketScreenshotterPage() {
   const [url, setUrl] = useState('')
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '1d' | '1w' | '1m' | 'max'>('1d')
   const [chartWatermark, setChartWatermark] = useState<'none' | 'wordmark' | 'icon'>('none')
+  const [mode, setMode] = useState<'dom' | 'template' | 'cleanslate'>('cleanslate')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ScreenshotResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +41,7 @@ export default function PolymarketScreenshotterPage() {
         url,
         timeRange,
         return: 'json',
+        mode,
         ...(chartWatermark !== 'none' && { chartWatermark })
       })
       const response = await fetch(`/api/polymarket-screenshot?${params.toString()}`)
@@ -56,7 +58,7 @@ export default function PolymarketScreenshotterPage() {
     } finally {
       setLoading(false)
     }
-  }, [url, timeRange, chartWatermark])
+  }, [url, timeRange, chartWatermark, mode])
 
   const handleDownload = useCallback(() => {
     if (!result?.imageBase64 || !result?.fileName) return
@@ -184,12 +186,29 @@ export default function PolymarketScreenshotterPage() {
                 id="chart-watermark"
                 value={chartWatermark}
                 onChange={(e) => setChartWatermark(e.target.value as typeof chartWatermark)}
-                disabled={loading}
+                disabled={loading || mode === 'template'}
                 className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 <option value="none">None</option>
                 <option value="wordmark">Wordmark</option>
                 <option value="icon">Icon</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col">
+              <label htmlFor="mode" className="block text-sm font-medium text-gray-900 mb-2">
+                Render Mode
+              </label>
+              <select
+                id="mode"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as typeof mode)}
+                disabled={loading}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+              >
+                <option value="cleanslate">Clean Slate ✨</option>
+                <option value="dom">DOM</option>
+                <option value="template">Template (beta)</option>
               </select>
             </div>
 
