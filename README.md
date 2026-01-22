@@ -16,6 +16,7 @@ Then open:
 
 - `GET /api/polymarket-screenshot?url=<polymarket-url>&timeRange=1d&return=json`
 - `GET /api/polymarket-screenshot?url=<polymarket-url>&timeRange=1d` (returns PNG)
+- `GET /api/polymarket-screenshot?url=<polymarket-url>&timeRange=1d&aspect=square` (1:1 square)
 
 ## Notes
 

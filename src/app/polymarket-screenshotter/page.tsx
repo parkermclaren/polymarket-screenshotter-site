@@ -16,7 +16,9 @@ export default function PolymarketScreenshotterPage() {
   const [url, setUrl] = useState('')
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '1d' | '1w' | '1m' | 'max'>('1d')
   const [chartWatermark, setChartWatermark] = useState<'none' | 'wordmark' | 'icon'>('none')
-  const [mode, setMode] = useState<'dom' | 'template' | 'cleanslate'>('cleanslate')
+  const [mode, setMode] = useState<'dom' | 'template'>('dom')
+  const [aspect, setAspect] = useState<'twitter' | 'square'>('twitter')
+  const [debugLayout, setDebugLayout] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ScreenshotResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +44,9 @@ export default function PolymarketScreenshotterPage() {
         timeRange,
         return: 'json',
         mode,
-        ...(chartWatermark !== 'none' && { chartWatermark })
+        ...(chartWatermark !== 'none' && { chartWatermark }),
+        ...(debugLayout && { debugLayout: '1' }),
+        ...(aspect === 'square' && { aspect: 'square' })
       })
       const response = await fetch(`/api/polymarket-screenshot?${params.toString()}`)
       const data = await response.json()
@@ -58,7 +62,7 @@ export default function PolymarketScreenshotterPage() {
     } finally {
       setLoading(false)
     }
-  }, [url, timeRange, chartWatermark, mode])
+  }, [url, timeRange, chartWatermark, mode, debugLayout, aspect])
 
   const handleDownload = useCallback(() => {
     if (!result?.imageBase64 || !result?.fileName) return
@@ -135,7 +139,7 @@ export default function PolymarketScreenshotterPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Capture a market screenshot</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Paste a Polymarket market URL and generate a clean <span className="font-medium text-gray-900">7:8</span> image for Twitter.
+            Paste a Polymarket market URL and generate a clean <span className="font-medium text-gray-900">7:8</span> or <span className="font-medium text-gray-900">1:1</span> image.
           </p>
         </div>
 
@@ -196,6 +200,22 @@ export default function PolymarketScreenshotterPage() {
             </div>
 
             <div className="flex flex-col">
+              <label htmlFor="aspect" className="block text-sm font-medium text-gray-900 mb-2">
+                Aspect ratio
+              </label>
+              <select
+                id="aspect"
+                value={aspect}
+                onChange={(e) => setAspect(e.target.value as typeof aspect)}
+                disabled={loading}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+              >
+                <option value="twitter">7:8 (Twitter)</option>
+                <option value="square">1:1 (Square)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col">
               <label htmlFor="mode" className="block text-sm font-medium text-gray-900 mb-2">
                 Render Mode
               </label>
@@ -206,10 +226,25 @@ export default function PolymarketScreenshotterPage() {
                 disabled={loading}
                 className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
-                <option value="cleanslate">Clean Slate ✨</option>
                 <option value="dom">DOM</option>
                 <option value="template">Template (beta)</option>
               </select>
+            </div>
+
+            <div className="flex flex-col">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Debug layout
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={debugLayout}
+                  onChange={(e) => setDebugLayout(e.target.checked)}
+                  disabled={loading}
+                  className="h-4 w-4"
+                />
+                <span>Show overlay</span>
+              </label>
             </div>
 
             <div className="flex flex-col">
@@ -270,7 +305,7 @@ export default function PolymarketScreenshotterPage() {
 
                 <div className="mt-5 flex justify-center">
                   <div className="relative w-full max-w-[420px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                    <div style={{ aspectRatio: '7/8' }}>
+                    <div style={{ aspectRatio: aspect === 'square' ? '1 / 1' : '7 / 8' }}>
                       <img
                         src={`data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`}
                         alt={result.marketTitle || 'Polymarket screenshot'}
@@ -278,7 +313,7 @@ export default function PolymarketScreenshotterPage() {
                       />
                     </div>
                     <div className="absolute bottom-3 right-3 rounded-lg border border-gray-200 bg-white/90 px-2 py-1 text-xs text-gray-600 shadow-sm backdrop-blur">
-                      7:8
+                      {aspect === 'square' ? '1:1' : '7:8'}
                     </div>
                   </div>
                 </div>
@@ -335,7 +370,7 @@ export default function PolymarketScreenshotterPage() {
 
         {/* Footer note */}
         <div className="mt-10 text-center text-xs text-gray-500">
-          This tool captures a screenshot preview of a Polymarket market page and formats it to a 7:8 image.
+          This tool captures a screenshot preview of a Polymarket market page and formats it to a 7:8 or 1:1 image.
         </div>
       </div>
     </div>

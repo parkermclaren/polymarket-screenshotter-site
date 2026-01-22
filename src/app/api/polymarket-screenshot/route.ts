@@ -3,8 +3,8 @@ import { readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
 import type { PolymarketScreenshotService, ScreenshotResult } from '@/polymarket-screenshotter/lib/polymarket-screenshot-service'
+import type { PolymarketSquareScreenshotService } from '@/polymarket-screenshotter/lib/polymarket-square-screenshot-service'
 import type { TemplateScreenshotService, TemplateScreenshotResult } from '@/polymarket-screenshotter/lib/template-screenshot-service'
-import type { CleanSlateScreenshotService, CleanSlateScreenshotResult } from '@/polymarket-screenshotter/lib/cleanslate-screenshot-service'
 
 export const maxDuration = 60 // Allow up to 60 seconds for screenshot capture
 export const dynamic = 'force-dynamic'
@@ -18,6 +18,12 @@ declare global {
   // eslint-disable-next-line no-var
   var __polymarketScreenshotServiceVersion: string | undefined
   // eslint-disable-next-line no-var
+  var __polymarketSquareScreenshotService: any | undefined
+  // eslint-disable-next-line no-var
+  var __polymarketSquareScreenshotServiceInit: Promise<any> | undefined
+  // eslint-disable-next-line no-var
+  var __polymarketSquareScreenshotServiceVersion: string | undefined
+  // eslint-disable-next-line no-var
   var __polymarketScreenshotSemaphore:
     | { max: number; active: number; queue: Array<() => void> }
     | undefined
@@ -28,19 +34,12 @@ declare global {
   var __templateScreenshotServiceInit: Promise<any> | undefined
   // eslint-disable-next-line no-var
   var __templateScreenshotServiceVersion: string | undefined
-  // Clean slate service globals
-  // eslint-disable-next-line no-var
-  var __cleanSlateScreenshotService: any | undefined
-  // eslint-disable-next-line no-var
-  var __cleanSlateScreenshotServiceInit: Promise<any> | undefined
-  // eslint-disable-next-line no-var
-  var __cleanSlateScreenshotServiceVersion: string | undefined
 }
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 const SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-screenshot-service.ts')
+const SQUARE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-square-screenshot-service.ts')
 const TEMPLATE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/template-screenshot-service.ts')
-const CLEANSLATE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/cleanslate-screenshot-service.ts')
 type ChartWatermarkMode = 'none' | 'wordmark' | 'icon'
 
 function normalizeChartWatermark(value: unknown): ChartWatermarkMode {
@@ -72,6 +71,21 @@ async function getServiceModule(): Promise<typeof import('@/polymarket-screensho
   return await import('@/polymarket-screenshotter/lib/polymarket-screenshot-service')
 }
 
+async function getSquareServiceModule(): Promise<typeof import('@/polymarket-screenshotter/lib/polymarket-square-screenshot-service')> {
+  if (isDevelopment) {
+    Object.keys(require.cache).forEach(key => {
+      if (
+        key.includes('polymarket-square-screenshot-service') ||
+        key.includes('polymarket-screenshotter/lib')
+      ) {
+        delete require.cache[key]
+      }
+    })
+  }
+
+  return await import('@/polymarket-screenshotter/lib/polymarket-square-screenshot-service')
+}
+
 /**
  * Get a version string based on file modification time (for development hot-reload)
  * or a static version (for production)
@@ -92,6 +106,21 @@ function getServiceVersion(): string {
     }
   }
   return 'watermark-debug-1'
+}
+
+function getSquareServiceVersion(): string {
+  if (isDevelopment) {
+    try {
+      const stats = statSync(SQUARE_SERVICE_FILE_PATH)
+      const mtime = stats.mtimeMs
+      const content = readFileSync(SQUARE_SERVICE_FILE_PATH, 'utf-8').slice(0, 1000)
+      const hash = createHash('md5').update(content).digest('hex').slice(0, 8)
+      return `dev-${mtime}-${hash}`
+    } catch {
+      return `dev-${Date.now()}`
+    }
+  }
+  return 'square-v1'
 }
 
 async function getWarmService(): Promise<PolymarketScreenshotService> {
@@ -130,6 +159,42 @@ async function getWarmService(): Promise<PolymarketScreenshotService> {
   }
 
   return globalThis.__polymarketScreenshotServiceInit
+}
+
+async function getWarmSquareService(): Promise<PolymarketSquareScreenshotService> {
+  const SQUARE_SERVICE_VERSION = getSquareServiceVersion()
+
+  if (
+    globalThis.__polymarketSquareScreenshotService &&
+    globalThis.__polymarketSquareScreenshotServiceVersion === SQUARE_SERVICE_VERSION
+  ) {
+    return globalThis.__polymarketSquareScreenshotService
+  }
+
+  if (globalThis.__polymarketSquareScreenshotServiceInit) {
+    globalThis.__polymarketSquareScreenshotServiceInit = undefined
+  }
+
+  if (!globalThis.__polymarketSquareScreenshotServiceInit) {
+    globalThis.__polymarketSquareScreenshotServiceInit = (async () => {
+      if (globalThis.__polymarketSquareScreenshotService) {
+        try {
+          await globalThis.__polymarketSquareScreenshotService.cleanup()
+        } catch {}
+      }
+
+      const serviceModule = await getSquareServiceModule()
+      const PolymarketSquareScreenshotService = serviceModule.PolymarketSquareScreenshotService
+
+      const service = new PolymarketSquareScreenshotService()
+      await service.initialize()
+      globalThis.__polymarketSquareScreenshotService = service
+      globalThis.__polymarketSquareScreenshotServiceVersion = SQUARE_SERVICE_VERSION
+      return service
+    })()
+  }
+
+  return globalThis.__polymarketSquareScreenshotServiceInit
 }
 
 /**
@@ -200,74 +265,6 @@ async function getWarmTemplateService(): Promise<TemplateScreenshotService> {
   return globalThis.__templateScreenshotServiceInit
 }
 
-/**
- * Get the clean slate service module
- */
-async function getCleanSlateServiceModule(): Promise<typeof import('@/polymarket-screenshotter/lib/cleanslate-screenshot-service')> {
-  if (isDevelopment) {
-    Object.keys(require.cache).forEach(key => {
-      if (key.includes('cleanslate-screenshot-service')) {
-        delete require.cache[key]
-      }
-    })
-  }
-  return await import('@/polymarket-screenshotter/lib/cleanslate-screenshot-service')
-}
-
-/**
- * Get version for clean slate service
- */
-function getCleanSlateServiceVersion(): string {
-  if (isDevelopment) {
-    try {
-      const stats = statSync(CLEANSLATE_SERVICE_FILE_PATH)
-      const mtime = stats.mtimeMs
-      const content = readFileSync(CLEANSLATE_SERVICE_FILE_PATH, 'utf-8').slice(0, 1000)
-      const hash = createHash('md5').update(content).digest('hex').slice(0, 8)
-      return `dev-${mtime}-${hash}`
-    } catch {
-      return `dev-${Date.now()}`
-    }
-  }
-  return 'cleanslate-v1'
-}
-
-async function getWarmCleanSlateService(): Promise<CleanSlateScreenshotService> {
-  const CLEANSLATE_SERVICE_VERSION = getCleanSlateServiceVersion()
-  
-  if (
-    globalThis.__cleanSlateScreenshotService &&
-    globalThis.__cleanSlateScreenshotServiceVersion === CLEANSLATE_SERVICE_VERSION
-  ) {
-    return globalThis.__cleanSlateScreenshotService
-  }
-
-  if (globalThis.__cleanSlateScreenshotServiceInit) {
-    globalThis.__cleanSlateScreenshotServiceInit = undefined
-  }
-
-  if (!globalThis.__cleanSlateScreenshotServiceInit) {
-    globalThis.__cleanSlateScreenshotServiceInit = (async () => {
-      if (globalThis.__cleanSlateScreenshotService) {
-        try {
-          await globalThis.__cleanSlateScreenshotService.cleanup()
-        } catch {}
-      }
-      
-      const serviceModule = await getCleanSlateServiceModule()
-      const CleanSlateScreenshotService = serviceModule.CleanSlateScreenshotService
-      
-      const service = new CleanSlateScreenshotService()
-      await service.initialize()
-      globalThis.__cleanSlateScreenshotService = service
-      globalThis.__cleanSlateScreenshotServiceVersion = CLEANSLATE_SERVICE_VERSION
-      return service
-    })()
-  }
-
-  return globalThis.__cleanSlateScreenshotServiceInit
-}
-
 function getSemaphore() {
   if (!globalThis.__polymarketScreenshotSemaphore) {
     const max = Math.max(1, Number(process.env.SCREENSHOT_CONCURRENCY || 2))
@@ -295,7 +292,7 @@ async function withSemaphore<T>(fn: () => Promise<T>): Promise<T> {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { url, width, deviceScaleFactor, timeRange, chartWatermark } = body
+    const { url, width, deviceScaleFactor, timeRange, chartWatermark, debugLayout, aspect } = body
 
     if (!url) {
       return NextResponse.json(
@@ -312,10 +309,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`📸 Starting Polymarket screenshot capture for: ${url}`)
-    console.log(`🧩 Screenshot service version: ${getServiceVersion()}`)
+    const resolvedAspect = aspect === 'square' ? 'square' : 'twitter'
+    console.log(`📸 Starting Polymarket screenshot capture for: ${url} (${resolvedAspect})`)
 
-    const service = await getWarmService()
+    const service = resolvedAspect === 'square' ? await getWarmSquareService() : await getWarmService()
 
     const result: ScreenshotResult = await withSemaphore(() =>
       service.captureMarketScreenshot(url, {
@@ -323,6 +320,7 @@ export async function POST(request: NextRequest) {
         deviceScaleFactor: deviceScaleFactor || 2,
         timeRange: timeRange || '6h', // Default to 6H for better x-axis labels
         chartWatermark: normalizeChartWatermark(chartWatermark),
+        debugLayout: debugLayout === true,
       })
     )
 
@@ -359,9 +357,11 @@ export async function GET(request: NextRequest) {
   const url = searchParams.get('url')
   const width = searchParams.get('width')
   const timeRange = searchParams.get('timeRange') || '1d' // Default to 1D for better x-axis labels
+  const aspect = searchParams.get('aspect') || 'twitter'
   const chartWatermark = normalizeChartWatermark(searchParams.get('chartWatermark'))
   const returnType = searchParams.get('return') || 'image' // 'image' or 'json'
-  const mode = searchParams.get('mode') || 'dom' // 'dom' (default), 'template', or 'cleanslate'
+  const debugLayout = searchParams.get('debugLayout') === '1' || searchParams.get('debugLayout') === 'true'
+  const mode = searchParams.get('mode') || 'dom' // 'dom' (default) or 'template'
 
   if (!url) {
     return NextResponse.json(
@@ -377,21 +377,12 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  console.log(`📸 Starting Polymarket screenshot capture for: ${url} (mode: ${mode})`)
+  const resolvedAspect = aspect === 'square' ? 'square' : 'twitter'
+  console.log(`📸 Starting Polymarket screenshot capture for: ${url} (mode: ${mode}, aspect: ${resolvedAspect})`)
 
-  let result: ScreenshotResult | TemplateScreenshotResult | CleanSlateScreenshotResult
+  let result: ScreenshotResult | TemplateScreenshotResult
 
-  if (mode === 'cleanslate') {
-    // Use clean slate approach (clone elements into controlled container)
-    const cleanSlateService = await getWarmCleanSlateService()
-    result = await withSemaphore(() =>
-      cleanSlateService.captureCleanSlateScreenshot(url, {
-        width: width ? parseInt(width) : 800,
-        deviceScaleFactor: 2,
-        timeRange: timeRange as '1h' | '6h' | '1d' | '1w' | '1m' | 'max',
-      })
-    )
-  } else if (mode === 'template') {
+  if (mode === 'template') {
     // Use template-based rendering
     const templateService = await getWarmTemplateService()
     result = await withSemaphore(() =>
@@ -403,13 +394,14 @@ export async function GET(request: NextRequest) {
     )
   } else {
     // Use DOM manipulation (default)
-    const service = await getWarmService()
+    const service = resolvedAspect === 'square' ? await getWarmSquareService() : await getWarmService()
     result = await withSemaphore(() =>
       service.captureMarketScreenshot(url, {
         width: width ? parseInt(width) : 700,
         deviceScaleFactor: 2,
         timeRange: timeRange as '1h' | '6h' | '1d' | '1w' | '1m' | 'max',
         chartWatermark,
+        debugLayout,
       })
     )
   }
