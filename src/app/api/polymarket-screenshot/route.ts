@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readFileSync, statSync } from 'fs'
+import { readFileSync, statSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
 import type { PolymarketScreenshotService, ScreenshotResult } from '@/polymarket-screenshotter/lib/polymarket-screenshot-service'
@@ -40,7 +40,31 @@ const isDevelopment = process.env.NODE_ENV === 'development'
 const SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-screenshot-service.ts')
 const SQUARE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-square-screenshot-service.ts')
 const TEMPLATE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/template-screenshot-service.ts')
+const RULES_DIR_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/rules')
 type ChartWatermarkMode = 'none' | 'wordmark' | 'icon'
+
+function getRulesVersionTag(): string {
+  if (!isDevelopment) return 'rules-v1'
+
+  try {
+    const files = readdirSync(RULES_DIR_PATH).filter(file => file.endsWith('.ts'))
+    let maxMtime = 0
+    const hash = createHash('md5')
+
+    files.forEach(file => {
+      const fullPath = join(RULES_DIR_PATH, file)
+      const stats = statSync(fullPath)
+      maxMtime = Math.max(maxMtime, stats.mtimeMs)
+      hash.update(file)
+      hash.update(String(stats.mtimeMs))
+    })
+
+    const digest = hash.digest('hex').slice(0, 8)
+    return `rules-${maxMtime}-${digest}`
+  } catch {
+    return `rules-${Date.now()}`
+  }
+}
 
 function normalizeChartWatermark(value: unknown): ChartWatermarkMode {
   if (value === 'icon') return 'icon'
@@ -99,7 +123,8 @@ function getServiceVersion(): string {
       // Also hash a small portion of the file to catch content changes
       const content = readFileSync(SERVICE_FILE_PATH, 'utf-8').slice(0, 1000)
       const hash = createHash('md5').update(content).digest('hex').slice(0, 8)
-      return `dev-${mtime}-${hash}`
+      const rulesTag = getRulesVersionTag()
+      return `dev-${mtime}-${hash}-${rulesTag}`
     } catch {
       // Fallback if file doesn't exist or can't be read
       return `dev-${Date.now()}`
@@ -115,7 +140,8 @@ function getSquareServiceVersion(): string {
       const mtime = stats.mtimeMs
       const content = readFileSync(SQUARE_SERVICE_FILE_PATH, 'utf-8').slice(0, 1000)
       const hash = createHash('md5').update(content).digest('hex').slice(0, 8)
-      return `dev-${mtime}-${hash}`
+      const rulesTag = getRulesVersionTag()
+      return `dev-${mtime}-${hash}-${rulesTag}`
     } catch {
       return `dev-${Date.now()}`
     }
@@ -362,6 +388,8 @@ export async function GET(request: NextRequest) {
   const returnType = searchParams.get('return') || 'image' // 'image' or 'json'
   const debugLayout = searchParams.get('debugLayout') === '1' || searchParams.get('debugLayout') === 'true'
   const mode = searchParams.get('mode') || 'dom' // 'dom' (default) or 'template'
+  const showPotentialPayout = searchParams.get('showPotentialPayout') === '1' || searchParams.get('showPotentialPayout') === 'true'
+  const payoutInvestment = searchParams.get('payoutInvestment') ? parseInt(searchParams.get('payoutInvestment')!) : 150
 
   if (!url) {
     return NextResponse.json(
@@ -402,6 +430,8 @@ export async function GET(request: NextRequest) {
         timeRange: timeRange as '1h' | '6h' | '1d' | '1w' | '1m' | 'max',
         chartWatermark,
         debugLayout,
+        showPotentialPayout,
+        payoutInvestment,
       })
     )
   }

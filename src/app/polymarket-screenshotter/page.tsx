@@ -19,6 +19,8 @@ export default function PolymarketScreenshotterPage() {
   const [mode, setMode] = useState<'dom' | 'template'>('dom')
   const [aspect, setAspect] = useState<'twitter' | 'square'>('twitter')
   const [debugLayout, setDebugLayout] = useState(false)
+  const [showPotentialPayout, setShowPotentialPayout] = useState(false)
+  const [payoutInvestment, setPayoutInvestment] = useState(150)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ScreenshotResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +48,9 @@ export default function PolymarketScreenshotterPage() {
         mode,
         ...(chartWatermark !== 'none' && { chartWatermark }),
         ...(debugLayout && { debugLayout: '1' }),
-        ...(aspect === 'square' && { aspect: 'square' })
+        ...(aspect === 'square' && { aspect: 'square' }),
+        ...(showPotentialPayout && { showPotentialPayout: '1' }),
+        ...(showPotentialPayout && payoutInvestment && { payoutInvestment: payoutInvestment.toString() })
       })
       const response = await fetch(`/api/polymarket-screenshot?${params.toString()}`)
       const data = await response.json()
@@ -62,7 +66,7 @@ export default function PolymarketScreenshotterPage() {
     } finally {
       setLoading(false)
     }
-  }, [url, timeRange, chartWatermark, mode, debugLayout, aspect])
+  }, [url, timeRange, chartWatermark, mode, debugLayout, aspect, showPotentialPayout, payoutInvestment])
 
   const handleDownload = useCallback(() => {
     if (!result?.imageBase64 || !result?.fileName) return
@@ -145,24 +149,27 @@ export default function PolymarketScreenshotterPage() {
 
         {/* Input */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex-1">
-              <label htmlFor="url-input" className="block text-sm font-medium text-gray-900 mb-2">
-                Market URL
-              </label>
-              <input
-                id="url-input"
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="https://polymarket.com/event/..."
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-                disabled={loading}
-              />
-            </div>
+          {/* Market URL - Full width */}
+          <div className="mb-4">
+            <label htmlFor="url-input" className="block text-sm font-medium text-gray-900 mb-2">
+              Market URL
+            </label>
+            <input
+              id="url-input"
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="https://polymarket.com/event/..."
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+              disabled={loading}
+            />
+          </div>
 
-            <div className="flex flex-col">
+          {/* Options Grid */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Time Range */}
+            <div>
               <label htmlFor="time-range" className="block text-sm font-medium text-gray-900 mb-2">
                 Time Range
               </label>
@@ -171,7 +178,7 @@ export default function PolymarketScreenshotterPage() {
                 value={timeRange}
                 onChange={(e) => setTimeRange(e.target.value as typeof timeRange)}
                 disabled={loading}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 <option value="1h">1H</option>
                 <option value="6h">6H</option>
@@ -182,16 +189,34 @@ export default function PolymarketScreenshotterPage() {
               </select>
             </div>
 
-            <div className="flex flex-col">
+            {/* Aspect Ratio */}
+            <div>
+              <label htmlFor="aspect" className="block text-sm font-medium text-gray-900 mb-2">
+                Aspect Ratio
+              </label>
+              <select
+                id="aspect"
+                value={aspect}
+                onChange={(e) => setAspect(e.target.value as typeof aspect)}
+                disabled={loading}
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+              >
+                <option value="twitter">7:8 (Twitter)</option>
+                <option value="square">1:1 (Square)</option>
+              </select>
+            </div>
+
+            {/* Chart Watermark */}
+            <div>
               <label htmlFor="chart-watermark" className="block text-sm font-medium text-gray-900 mb-2">
-                Chart watermark
+                Chart Watermark
               </label>
               <select
                 id="chart-watermark"
                 value={chartWatermark}
                 onChange={(e) => setChartWatermark(e.target.value as typeof chartWatermark)}
                 disabled={loading || mode === 'template'}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 <option value="none">None</option>
                 <option value="wordmark">Wordmark</option>
@@ -199,23 +224,8 @@ export default function PolymarketScreenshotterPage() {
               </select>
             </div>
 
-            <div className="flex flex-col">
-              <label htmlFor="aspect" className="block text-sm font-medium text-gray-900 mb-2">
-                Aspect ratio
-              </label>
-              <select
-                id="aspect"
-                value={aspect}
-                onChange={(e) => setAspect(e.target.value as typeof aspect)}
-                disabled={loading}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="twitter">7:8 (Twitter)</option>
-                <option value="square">1:1 (Square)</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col">
+            {/* Render Mode */}
+            <div>
               <label htmlFor="mode" className="block text-sm font-medium text-gray-900 mb-2">
                 Render Mode
               </label>
@@ -224,37 +234,70 @@ export default function PolymarketScreenshotterPage() {
                 value={mode}
                 onChange={(e) => setMode(e.target.value as typeof mode)}
                 disabled={loading}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 <option value="dom">DOM</option>
                 <option value="template">Template (beta)</option>
               </select>
             </div>
+          </div>
 
-            <div className="flex flex-col">
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Debug layout
+          {/* Secondary Options Row */}
+          <div className="mt-4 flex flex-wrap items-end gap-4">
+            {/* Payout Display */}
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showPotentialPayout}
+                  onChange={(e) => setShowPotentialPayout(e.target.checked)}
+                  disabled={loading}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-900">Show payout</span>
               </label>
-              <label className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm">
+            </div>
+
+            {/* Investment Amount (conditional) */}
+            {showPotentialPayout && (
+              <div className="flex-1 sm:flex-initial sm:w-32">
+                <label htmlFor="payout-investment" className="sr-only">
+                  Investment Amount
+                </label>
+                <input
+                  id="payout-investment"
+                  type="number"
+                  value={payoutInvestment}
+                  onChange={(e) => setPayoutInvestment(parseInt(e.target.value) || 150)}
+                  disabled={loading}
+                  min="1"
+                  max="10000"
+                  placeholder="150"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
+                />
+              </div>
+            )}
+
+            {/* Debug Layout */}
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-2">
                 <input
                   type="checkbox"
                   checked={debugLayout}
                   onChange={(e) => setDebugLayout(e.target.checked)}
                   disabled={loading}
-                  className="h-4 w-4"
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span>Show overlay</span>
+                <span className="text-sm font-medium text-gray-900">Debug overlay</span>
               </label>
             </div>
 
-            <div className="flex flex-col">
-              <label className="block text-sm font-medium text-gray-900 mb-2 invisible">
-                Action
-              </label>
+            {/* Capture Button */}
+            <div className="ml-auto">
               <button
                 onClick={handleCapture}
                 disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {loading ? (
                   <>
@@ -274,7 +317,8 @@ export default function PolymarketScreenshotterPage() {
               </button>
             </div>
           </div>
-          <p className="mt-3 text-xs text-gray-500">Tip: hit <span className="font-medium text-gray-900">Enter</span> to capture.</p>
+
+          <p className="mt-4 text-xs text-gray-500">Tip: hit <span className="font-medium text-gray-900">Enter</span> to capture.</p>
 
           {error && (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
