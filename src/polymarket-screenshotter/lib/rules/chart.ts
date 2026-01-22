@@ -93,7 +93,8 @@ export async function applyChartWatermark(page: Page, watermarkMode: ChartWaterm
           const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
           path.setAttribute(
             'd',
-            'M68.5 0L0 34.5V103.5L68.5 138L137 103.5V34.5L68.5 0ZM68.5 12.5L124.5 40.5L68.5 68.5L12.5 40.5L68.5 12.5ZM12.5 109.5V53.5L62.5 78.5V124.5L12.5 99.5V109.5ZM74.5 124.5V78.5L124.5 53.5V109.5L74.5 124.5Z'
+            // Use the same Polymarket icon mark as our other screenshot flows (e.g. template and square).
+            'M136.267 152.495c0 7.265 0 10.897-2.376 12.697-2.375 1.801-5.872.82-12.867-1.143L8.632 132.51c-4.214-1.182-6.321-1.773-7.54-3.381-1.218-1.607-1.218-3.796-1.218-8.172V47.043c0-4.376 0-6.565 1.218-8.172 1.219-1.608 3.326-2.199 7.54-3.381L121.024 3.95c6.995-1.963 10.492-2.944 12.867-1.143s2.376 5.432 2.376 12.697zM27.904 122.228l93.062 26.117V96.113zm-12.73-12.117L108.217 84 15.174 57.889zm12.73-64.339 93.062 26.116V19.655z'
           )
           path.setAttribute('fill', 'currentColor')
           svg.appendChild(path)
