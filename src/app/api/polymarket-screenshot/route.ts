@@ -4,6 +4,7 @@ import { join } from 'path'
 import { createHash } from 'crypto'
 import type { PolymarketScreenshotService, ScreenshotResult } from '@/polymarket-screenshotter/lib/polymarket-screenshot-service'
 import type { PolymarketSquareScreenshotService } from '@/polymarket-screenshotter/lib/polymarket-square-screenshot-service'
+import type { TemplateScreenshotService, TemplateScreenshotResult } from '@/polymarket-screenshotter/lib/template-screenshot-service'
 
 export const maxDuration = 60 // Allow up to 60 seconds for screenshot capture
 export const dynamic = 'force-dynamic'
@@ -26,11 +27,19 @@ declare global {
   var __polymarketScreenshotSemaphore:
     | { max: number; active: number; queue: Array<() => void> }
     | undefined
+  // Template service globals
+  // eslint-disable-next-line no-var
+  var __templateScreenshotService: any | undefined
+  // eslint-disable-next-line no-var
+  var __templateScreenshotServiceInit: Promise<any> | undefined
+  // eslint-disable-next-line no-var
+  var __templateScreenshotServiceVersion: string | undefined
 }
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 const SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-screenshot-service.ts')
 const SQUARE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/polymarket-square-screenshot-service.ts')
+const TEMPLATE_SERVICE_FILE_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/template-screenshot-service.ts')
 const RULES_DIR_PATH = join(process.cwd(), 'src/polymarket-screenshotter/lib/rules')
 type ChartWatermarkMode = 'none' | 'wordmark' | 'icon'
 
@@ -214,6 +223,74 @@ async function getWarmSquareService(): Promise<PolymarketSquareScreenshotService
   return globalThis.__polymarketSquareScreenshotServiceInit
 }
 
+/**
+ * Get the template service module, clearing cache in development
+ */
+async function getTemplateServiceModule(): Promise<typeof import('@/polymarket-screenshotter/lib/template-screenshot-service')> {
+  if (isDevelopment) {
+    Object.keys(require.cache).forEach(key => {
+      if (key.includes('template-screenshot-service')) {
+        delete require.cache[key]
+      }
+    })
+  }
+  return await import('@/polymarket-screenshotter/lib/template-screenshot-service')
+}
+
+/**
+ * Get version for template service (for hot-reload)
+ */
+function getTemplateServiceVersion(): string {
+  if (isDevelopment) {
+    try {
+      const stats = statSync(TEMPLATE_SERVICE_FILE_PATH)
+      const mtime = stats.mtimeMs
+      const content = readFileSync(TEMPLATE_SERVICE_FILE_PATH, 'utf-8').slice(0, 1000)
+      const hash = createHash('md5').update(content).digest('hex').slice(0, 8)
+      return `dev-${mtime}-${hash}`
+    } catch {
+      return `dev-${Date.now()}`
+    }
+  }
+  return 'template-v1'
+}
+
+async function getWarmTemplateService(): Promise<TemplateScreenshotService> {
+  const TEMPLATE_SERVICE_VERSION = getTemplateServiceVersion()
+  
+  if (
+    globalThis.__templateScreenshotService &&
+    globalThis.__templateScreenshotServiceVersion === TEMPLATE_SERVICE_VERSION
+  ) {
+    return globalThis.__templateScreenshotService
+  }
+
+  if (globalThis.__templateScreenshotServiceInit) {
+    globalThis.__templateScreenshotServiceInit = undefined
+  }
+
+  if (!globalThis.__templateScreenshotServiceInit) {
+    globalThis.__templateScreenshotServiceInit = (async () => {
+      if (globalThis.__templateScreenshotService) {
+        try {
+          await globalThis.__templateScreenshotService.cleanup()
+        } catch {}
+      }
+      
+      const serviceModule = await getTemplateServiceModule()
+      const TemplateScreenshotService = serviceModule.TemplateScreenshotService
+      
+      const service = new TemplateScreenshotService()
+      await service.initialize()
+      globalThis.__templateScreenshotService = service
+      globalThis.__templateScreenshotServiceVersion = TEMPLATE_SERVICE_VERSION
+      return service
+    })()
+  }
+
+  return globalThis.__templateScreenshotServiceInit
+}
+
 function getSemaphore() {
   if (!globalThis.__polymarketScreenshotSemaphore) {
     const max = Math.max(1, Number(process.env.SCREENSHOT_CONCURRENCY || 2))
@@ -330,9 +407,9 @@ export async function GET(request: NextRequest) {
   const resolvedAspect = aspect === 'square' ? 'square' : 'twitter'
   console.log(`📸 Starting Polymarket screenshot capture for: ${url} (aspect: ${resolvedAspect})`)
 
-  // Always use DOM manipulation
+  // Always use DOM manipulation mode
   const service = resolvedAspect === 'square' ? await getWarmSquareService() : await getWarmService()
-  const result = await withSemaphore(() =>
+  const result: ScreenshotResult = await withSemaphore(() =>
     service.captureMarketScreenshot(url, {
       width: width ? parseInt(width) : 700,
       deviceScaleFactor: 2,
