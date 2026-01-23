@@ -1,6 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
 import { applyChartWatermark, type ChartWatermarkMode } from './rules/chart'
-import { removeHowItWorks, removeHowItWorksSecondPass } from './rules/how-it-works'
+import { installHowItWorksBlocker, removeHowItWorks, removeHowItWorksSecondPass } from './rules/how-it-works'
 import { styleVolumeRow } from './rules/volume-row'
 import { styleBuyButtons } from './rules/buy-buttons'
 import { styleOutcomeLegend } from './rules/outcome-legend'
@@ -303,6 +303,10 @@ export class PolymarketSquareScreenshotService {
         'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
       )
       await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+
+      // Prevent the "How it works" banner from ever appearing (it can be injected late).
+      // Must be installed before navigation so it runs before site JS.
+      await installHowItWorksBlocker(page)
 
       // Force light mode (best-effort) BEFORE any site JS runs.
       // IMPORTANT: Avoid mutating documentElement/classes here; Polymarket can fail to render

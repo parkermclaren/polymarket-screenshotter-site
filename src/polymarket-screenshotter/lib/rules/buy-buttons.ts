@@ -55,7 +55,10 @@ export async function styleBuyButtons(page: Page, options: BuyButtonOptions = {}
       return Number.isNaN(value) ? null : value
     }
 
-    const formatCents = (value: number): string => value.toFixed(1)
+    const isWholeNumber = (value: number): boolean => Math.abs(value - Math.round(value)) < 1e-6
+    const roundTo1 = (value: number): number => Math.round(value * 10) / 10
+    const formatCents = (value: number, useDecimal: boolean): string =>
+      useDecimal ? value.toFixed(1) : value.toFixed(0)
 
     if (yesTextEl && noTextEl) {
       const yesText = yesTextEl.textContent || ''
@@ -64,8 +67,25 @@ export async function styleBuyButtons(page: Page, options: BuyButtonOptions = {}
       const noValue = parseCents(noText)
 
       if (yesValue !== null && noValue !== null) {
-        const adjustedNo = Math.max(0, 100 - yesValue)
-        const updatedNoText = noText.replace(/([0-9]+(?:\.[0-9]+)?)¢/, `${formatCents(adjustedNo)}¢`)
+        // Normalize display:
+        // - Never show a decimal on only one side.
+        // - If either side is truly fractional, show 1 decimal for BOTH and force sum to 100.0.
+        // - If both sides are whole, show no decimals.
+        const wantsDecimals = !(isWholeNumber(yesValue) && isWholeNumber(noValue))
+
+        const adjustedYes = wantsDecimals ? roundTo1(yesValue) : Math.round(yesValue)
+        // Compute the complement from adjustedYes so the displayed values always add to 100.
+        const adjustedNo = wantsDecimals ? roundTo1(100 - adjustedYes) : Math.max(0, 100 - adjustedYes)
+
+        const updatedYesText = yesText.replace(
+          /([0-9]+(?:\.[0-9]+)?)¢/,
+          `${formatCents(adjustedYes, wantsDecimals)}¢`
+        )
+        const updatedNoText = noText.replace(
+          /([0-9]+(?:\.[0-9]+)?)¢/,
+          `${formatCents(adjustedNo, wantsDecimals)}¢`
+        )
+        yesTextEl.textContent = updatedYesText
         noTextEl.textContent = updatedNoText
 
         // Add payout text if enabled
@@ -77,7 +97,7 @@ export async function styleBuyButtons(page: Page, options: BuyButtonOptions = {}
             return Math.round(investment / priceInDollars)
           }
 
-          const yesPayout = calculatePayout(yesValue)
+          const yesPayout = calculatePayout(adjustedYes)
           const noPayout = calculatePayout(adjustedNo)
 
           // Find the button containers to add payout text below them

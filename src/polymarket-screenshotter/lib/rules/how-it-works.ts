@@ -92,6 +92,121 @@ export async function removeHowItWorks(page: Page): Promise<void> {
 }
 
 /**
+ * Installs a blocker that continuously hides/removes "How it works" UI.
+ *
+ * Why: Polymarket sometimes injects this banner *after* initial load / after interactions,
+ * which can reintroduce it between cleanup passes. This runs before site JS and keeps
+ * removing it if it appears later.
+ */
+export async function installHowItWorksBlocker(page: Page): Promise<void> {
+  await page.evaluateOnNewDocument(() => {
+    const w = window as unknown as { __pmHowItWorksBlockerInstalled?: boolean }
+    if (w.__pmHowItWorksBlockerInstalled) return
+    w.__pmHowItWorksBlockerInstalled = true
+
+    const isHowItWorksText = (text: string) => /how it works/i.test(text.trim())
+
+    const hideEl = (el: HTMLElement | null) => {
+      if (!el) return
+      el.style.setProperty('display', 'none', 'important')
+    }
+
+    const safeHideCandidate = (candidate: HTMLElement, leaf: HTMLElement) => {
+      // Never hide a container that contains the trading buttons.
+      if (candidate.querySelector('.trading-button')) {
+        // Surgical: hide only the leaf (and an immediate wrapper if safe).
+        hideEl(leaf)
+        let p: HTMLElement | null = leaf.parentElement as HTMLElement | null
+        for (let i = 0; i < 3 && p; i++) {
+          if (!p.querySelector('.trading-button')) {
+            hideEl(p)
+            break
+          }
+          p = p.parentElement as HTMLElement | null
+        }
+        return
+      }
+
+      // Candidate is safe to hide.
+      hideEl(candidate)
+    }
+
+    const scanAndHide = () => {
+      // Keep targets narrow to avoid nuking large containers.
+      const nodes = Array.from(document.querySelectorAll('button, a, span, div')) as HTMLElement[]
+      const targets = nodes.filter(el => {
+        const text = (el.textContent || '').trim()
+        if (!text) return false
+        if (!isHowItWorksText(text)) return false
+        // Prevent hiding giant containers that happen to contain the phrase.
+        return text.length <= 60
+      })
+
+      for (const target of targets) {
+        const clickable =
+          (target.closest('button') as HTMLElement | null) ||
+          (target.closest('a') as HTMLElement | null) ||
+          (target.closest('div') as HTMLElement | null) ||
+          target
+
+        safeHideCandidate(clickable, target)
+
+        // Extra: try to remove likely banner wrappers if safe.
+        // (Many variants use "rounded-t-lg", "border-t", or mobile-only wrappers.)
+        let el: HTMLElement | null = target as HTMLElement
+        for (let i = 0; i < 10 && el; i++) {
+          el = el.parentElement as HTMLElement | null
+          if (!el) break
+          if (el.querySelector('.trading-button')) break
+
+          const cls = el.className || ''
+          const looksLikeBanner =
+            cls.includes('rounded-t-lg') ||
+            cls.includes('lg:hidden') ||
+            (cls.includes('border-t') && cls.includes('py-3')) ||
+            (isHowItWorksText(el.textContent || '') && cls.includes('bg-background'))
+
+          if (looksLikeBanner) {
+            try {
+              el.remove()
+            } catch {
+              hideEl(el)
+            }
+            break
+          }
+        }
+      }
+    }
+
+    const run = () => {
+      try {
+        scanAndHide()
+      } catch {
+        // ignore
+      }
+    }
+
+    // Run ASAP + keep running for late-injected UI.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true })
+    } else {
+      run()
+    }
+
+    const obs = new MutationObserver(() => run())
+    obs.observe(document.documentElement, { childList: true, subtree: true })
+
+    // Some variants update text without adding nodes; do a short periodic sweep too.
+    let ticks = 0
+    const id = window.setInterval(() => {
+      run()
+      ticks++
+      if (ticks > 20) window.clearInterval(id)
+    }, 250)
+  })
+}
+
+/**
  * Second pass to catch late-injected banners.
  */
 export async function removeHowItWorksSecondPass(page: Page): Promise<void> {

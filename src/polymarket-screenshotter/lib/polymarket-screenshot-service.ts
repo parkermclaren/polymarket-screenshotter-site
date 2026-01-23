@@ -1,7 +1,7 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
 import { adjustHeightForDateChips } from './rules/date-chips'
 import { applyChartWatermark, type ChartWatermarkMode } from './rules/chart'
-import { removeHowItWorks, removeHowItWorksSecondPass } from './rules/how-it-works'
+import { installHowItWorksBlocker, removeHowItWorks, removeHowItWorksSecondPass } from './rules/how-it-works'
 import { styleVolumeRow } from './rules/volume-row'
 import { styleHeader } from './rules/header-styling'
 import { hideUnwantedElements } from './rules/hide-elements'
@@ -310,6 +310,10 @@ export class PolymarketScreenshotService {
         'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
       )
       await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+
+      // Prevent the "How it works" banner from ever appearing (it can be injected late).
+      // Must be installed before navigation so it runs before site JS.
+      await installHowItWorksBlocker(page)
 
       // Force light mode (best-effort) BEFORE any site JS runs.
       // IMPORTANT: Avoid mutating documentElement/classes here; Polymarket can fail to render
@@ -713,6 +717,10 @@ export class PolymarketScreenshotService {
       // NOTE: We do NOT resize the viewport for 7:8 screenshots based on content height.
       // The user prefers the fixed 7:8 aspect ratio even if there is whitespace.
       // The Trade button will be fixed at the bottom of the 7:8 viewport.
+
+      // Final guarantee pass: remove any late-injected "How it works" UI right before capture.
+      await removeHowItWorks(page)
+      await removeHowItWorksSecondPass(page)
 
       console.log('📸 Taking viewport screenshot...')
       const screenshot = await page.screenshot({
