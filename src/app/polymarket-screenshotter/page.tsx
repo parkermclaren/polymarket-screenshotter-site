@@ -10,14 +10,20 @@ interface ScreenshotResult {
   imageBase64?: string
   imageMimeType?: string
   error?: string
+  ogImage?: {
+    fileName?: string
+    imageBase64?: string
+    imageMimeType?: string
+  }
 }
 
 export default function PolymarketScreenshotterPage() {
   const [url, setUrl] = useState('')
+  const [imageType, setImageType] = useState<'screenshot' | 'og'>('screenshot')
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '1d' | '1w' | '1m' | 'max'>('1d')
   const [chartWatermark, setChartWatermark] = useState<'none' | 'wordmark' | 'icon'>('none')
+  const [chartLineThickness, setChartLineThickness] = useState<'normal' | 'thick'>('normal')
   const [aspect, setAspect] = useState<'twitter' | 'square'>('twitter')
-  const [imageType, setImageType] = useState<'screenshot' | 'og'>('screenshot')
   const [debugLayout, setDebugLayout] = useState(false)
   const [showPotentialPayout, setShowPotentialPayout] = useState(false)
   const [payoutInvestment, setPayoutInvestment] = useState(150)
@@ -29,6 +35,8 @@ export default function PolymarketScreenshotterPage() {
   const [cropPosition, setCropPosition] = useState({ x: 0, y: 0, scale: 1 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [isResizing, setIsResizing] = useState(false)
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, scale: 1 })
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [ogAspectRatio, setOgAspectRatio] = useState<string>('1200 / 630')
   const [ogPixelSize, setOgPixelSize] = useState<{ width: number; height: number } | null>(null)
@@ -68,10 +76,9 @@ export default function PolymarketScreenshotterPage() {
     reader.readAsDataURL(file)
   }, [ogPixelSize])
 
-  // Derive OG aspect ratio from the returned image so the crop frame matches the pixels.
+  // Derive OG aspect ratio from the returned OG image so the crop frame matches the pixels.
   useEffect(() => {
-    if (imageType !== 'og') return
-    if (!result?.imageBase64) return
+    if (!result?.ogImage?.imageBase64) return
 
     const img = new Image()
     img.onload = () => {
@@ -82,12 +89,12 @@ export default function PolymarketScreenshotterPage() {
         setOgPixelSize({ width: w, height: h })
       }
     }
-    img.src = `data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`
-  }, [imageType, result?.imageBase64, result?.imageMimeType])
+    img.src = `data:${result.ogImage.imageMimeType || 'image/png'};base64,${result.ogImage.imageBase64}`
+  }, [result?.ogImage?.imageBase64, result?.ogImage?.imageMimeType])
 
   // Global paste handler for OG image editor
   useEffect(() => {
-    if (imageType !== 'og' || !result) return
+    if (!result?.ogImage) return
 
     const handlePasteGlobal = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items
@@ -109,7 +116,7 @@ export default function PolymarketScreenshotterPage() {
     return () => {
       window.removeEventListener('paste', handlePasteGlobal)
     }
-  }, [imageType, result, handleFileSelect])
+  }, [result?.ogImage, handleFileSelect])
 
   const handleCapture = useCallback(async () => {
     if (!url.trim()) {
@@ -127,32 +134,61 @@ export default function PolymarketScreenshotterPage() {
     setResult(null)
 
     try {
-      const params = new URLSearchParams({
-        url,
-        timeRange,
-        return: 'json',
-        imageType,
-        ...(chartWatermark !== 'none' && { chartWatermark }),
-        ...(debugLayout && { debugLayout: '1' }),
-        ...(aspect === 'square' && { aspect: 'square' }),
-        ...(showPotentialPayout && { showPotentialPayout: '1' }),
-        ...(showPotentialPayout && payoutInvestment && { payoutInvestment: payoutInvestment.toString() })
-      })
-      const response = await fetch(`/api/polymarket-screenshot?${params.toString()}`)
-      const data = await response.json()
+      if (imageType === 'og') {
+        // Fetch OG image only
+        const ogParams = new URLSearchParams({
+          url,
+          return: 'json',
+          imageType: 'og'
+        })
 
-      if (!data.success) {
-        setError(data.error || 'Screenshot capture failed')
-        return
+        const ogResponse = await fetch(`/api/polymarket-screenshot?${ogParams.toString()}`)
+        const ogData = await ogResponse.json()
+
+        if (!ogData.success) {
+          setError(ogData.error || 'OG image fetch failed')
+          return
+        }
+
+        setResult({
+          success: true,
+          ogImage: {
+            fileName: ogData.fileName,
+            imageBase64: ogData.imageBase64,
+            imageMimeType: ogData.imageMimeType
+          }
+        })
+      } else {
+        // Fetch screenshot only
+        const screenshotParams = new URLSearchParams({
+          url,
+          timeRange,
+          return: 'json',
+          imageType: 'screenshot',
+          ...(chartWatermark !== 'none' && { chartWatermark }),
+          ...(chartLineThickness === 'thick' && { chartLineThickness }),
+          ...(debugLayout && { debugLayout: '1' }),
+          ...(aspect === 'square' && { aspect: 'square' }),
+          ...(showPotentialPayout && { showPotentialPayout: '1' }),
+          ...(showPotentialPayout && payoutInvestment && { payoutInvestment: payoutInvestment.toString() })
+        })
+
+        const screenshotResponse = await fetch(`/api/polymarket-screenshot?${screenshotParams.toString()}`)
+        const screenshotData = await screenshotResponse.json()
+
+        if (!screenshotData.success) {
+          setError(screenshotData.error || 'Screenshot capture failed')
+          return
+        }
+
+        setResult(screenshotData)
       }
-
-      setResult(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
       setLoading(false)
     }
-  }, [url, timeRange, chartWatermark, debugLayout, aspect, imageType, showPotentialPayout, payoutInvestment])
+  }, [url, imageType, timeRange, chartWatermark, chartLineThickness, debugLayout, aspect, showPotentialPayout, payoutInvestment])
 
   const handleDownload = useCallback(() => {
     if (!result?.imageBase64 || !result?.fileName) return
@@ -194,6 +230,34 @@ export default function PolymarketScreenshotterPage() {
     }
   }, [result])
 
+  const handleCopyOGToClipboard = useCallback(async () => {
+    if (!result?.ogImage?.imageBase64) return
+
+    try {
+      // Convert base64 to blob
+      const mime = result.ogImage.imageMimeType || 'image/png'
+      const response = await fetch(`data:${mime};base64,${result.ogImage.imageBase64}`)
+      const blob = await response.blob()
+      
+      await navigator.clipboard.write([
+        new ClipboardItem({ [mime]: blob })
+      ])
+      
+      // Show brief feedback
+      const button = document.getElementById('copy-og-btn')
+      if (button) {
+        const originalText = button.textContent
+        button.textContent = 'Copied!'
+        setTimeout(() => {
+          button.textContent = originalText
+        }, 2000)
+      }
+    } catch (err) {
+      console.error('Failed to copy OG image to clipboard:', err)
+      setError('Failed to copy OG image to clipboard. Try downloading instead.')
+    }
+  }, [result])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !loading) {
       handleCapture()
@@ -228,16 +292,32 @@ export default function PolymarketScreenshotterPage() {
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !leftSideImage) return
-    setCropPosition(prev => ({
-      ...prev,
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y,
-    }))
+    if (!leftSideImage) return
+
+    if (isResizing) {
+      const dx = e.clientX - resizeStart.x
+      const dy = e.clientY - resizeStart.y
+      const delta = (dx + dy) / 200
+      const nextScale = Math.max(0.1, Math.min(10, resizeStart.scale + delta))
+      setCropPosition(prev => ({
+        ...prev,
+        scale: nextScale,
+      }))
+      return
+    }
+
+    if (isDragging) {
+      setCropPosition(prev => ({
+        ...prev,
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y,
+      }))
+    }
   }
 
   const handleMouseUp = () => {
     setIsDragging(false)
+    setIsResizing(false)
   }
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -250,8 +330,16 @@ export default function PolymarketScreenshotterPage() {
     }))
   }
 
+  const handleResizeMouseDown = (_corner: 'nw' | 'ne' | 'se' | 'sw') => (e: React.MouseEvent) => {
+    if (!leftSideImage) return
+    e.preventDefault()
+    e.stopPropagation()
+    setIsResizing(true)
+    setResizeStart({ x: e.clientX, y: e.clientY, scale: cropPosition.scale })
+  }
+
   const handleExportOGImage = async () => {
-    if (!result?.imageBase64 || !leftSideImage) return
+    if (!result?.ogImage?.imageBase64 || !leftSideImage) return
 
     try {
       // Create canvas to composite images
@@ -261,7 +349,7 @@ export default function PolymarketScreenshotterPage() {
 
       // Load the OG image (right half with blank left)
       const ogImg = new Image()
-      ogImg.src = `data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`
+      ogImg.src = `data:${result.ogImage.imageMimeType || 'image/png'};base64,${result.ogImage.imageBase64}`
       
       await new Promise((resolve) => {
         ogImg.onload = resolve
@@ -284,21 +372,65 @@ export default function PolymarketScreenshotterPage() {
       const leftHalfWidth = canvas.width / 2
       const leftHalfHeight = canvas.height
 
-      // Calculate crop area
-      const scale = cropPosition.scale
-      const imgWidth = leftImg.width * scale
-      const imgHeight = leftImg.height * scale
+      // Get the preview container and the preview image element to match positioning exactly
+      const previewContainer = document.querySelector('.og-editor-container') as HTMLElement
+      const previewImageContainer = previewContainer?.querySelector('.og-preview-image-container') as HTMLElement
+      
+      if (!previewContainer || !previewImageContainer) {
+        setError('Could not find preview containers')
+        return
+      }
 
-      // Center the image in the left half, accounting for position offset
-      const x = (leftHalfWidth - imgWidth) / 2 + cropPosition.x
-      const y = (leftHalfHeight - imgHeight) / 2 + cropPosition.y
+      const containerRect = previewImageContainer.getBoundingClientRect()
+      
+      // CRITICAL: The preview overlay image uses `inset-0` which makes it fill the ENTIRE container,
+      // then object-contain fits it to the FULL width/height. We only show the left half via clipPath.
+      const previewFullWidth = containerRect.width
+      const previewFullHeight = containerRect.height
 
-      // Draw the left side image with cropping
+      // Get the actual source image dimensions
+      const sourceImgWidth = leftImg.naturalWidth
+      const sourceImgHeight = leftImg.naturalHeight
+
+      // Calculate object-contain scale using FULL container dimensions
+      const sourceAspect = sourceImgWidth / sourceImgHeight
+      const containerAspect = previewFullWidth / previewFullHeight
+      
+      let objectContainScale: number
+      
+      if (sourceAspect > containerAspect) {
+        // Image is wider - limited by container width
+        objectContainScale = previewFullWidth / sourceImgWidth
+      } else {
+        // Image is taller - limited by container height
+        objectContainScale = previewFullHeight / sourceImgHeight
+      }
+
+      // Calculate displayed size (object-contain scale × user scale)
+      const baseDisplayedWidth = sourceImgWidth * objectContainScale
+      const baseDisplayedHeight = sourceImgHeight * objectContainScale
+      const displayedWidth = baseDisplayedWidth * cropPosition.scale
+      const displayedHeight = baseDisplayedHeight * cropPosition.scale
+
+      // The image transform is centered in the FULL container, not the left half
+      const centerX = previewFullWidth / 2
+      const centerY = previewFullHeight / 2
+      const previewX = centerX - (displayedWidth / 2) + cropPosition.x
+      const previewY = centerY - (displayedHeight / 2) + cropPosition.y
+
+      // Convert from preview CSS pixels to canvas pixels using FULL width ratio
+      const cssToCanvasRatio = canvas.width / previewFullWidth
+      const canvasX = previewX * cssToCanvasRatio
+      const canvasY = previewY * cssToCanvasRatio
+      const canvasWidth = displayedWidth * cssToCanvasRatio
+      const canvasHeight = displayedHeight * cssToCanvasRatio
+
+      // Draw the left side image with clipping to left half
       ctx.save()
       ctx.beginPath()
       ctx.rect(0, 0, leftHalfWidth, leftHalfHeight)
       ctx.clip()
-      ctx.drawImage(leftImg, x, y, imgWidth, imgHeight)
+      ctx.drawImage(leftImg, canvasX, canvasY, canvasWidth, canvasHeight)
       ctx.restore()
 
       // Convert to blob and download
@@ -307,7 +439,7 @@ export default function PolymarketScreenshotterPage() {
         const url = URL.createObjectURL(blob)
         const link = document.createElement('a')
         link.href = url
-        link.download = result.fileName?.replace('.png', '-composite.png') || 'polymarket-og-composite.png'
+        link.download = result.ogImage?.fileName?.replace('.png', '-composite.png') || 'polymarket-og-composite.png'
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -347,6 +479,51 @@ export default function PolymarketScreenshotterPage() {
 
         {/* Input */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          {/* Image Type Toggle */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-900 mb-2">
+              Image Type
+            </label>
+            <div className="flex gap-3">
+              <label className="flex-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="imageType"
+                  value="screenshot"
+                  checked={imageType === 'screenshot'}
+                  onChange={(e) => setImageType(e.target.value as 'screenshot' | 'og')}
+                  disabled={loading}
+                  className="sr-only"
+                />
+                <div className={`rounded-xl border-2 px-4 py-3 text-center text-sm font-semibold transition-colors ${
+                  imageType === 'screenshot'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                }`}>
+                  Screenshot
+                </div>
+              </label>
+              <label className="flex-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="imageType"
+                  value="og"
+                  checked={imageType === 'og'}
+                  onChange={(e) => setImageType(e.target.value as 'screenshot' | 'og')}
+                  disabled={loading}
+                  className="sr-only"
+                />
+                <div className={`rounded-xl border-2 px-4 py-3 text-center text-sm font-semibold transition-colors ${
+                  imageType === 'og'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                }`}>
+                  OG Image
+                </div>
+              </label>
+            </div>
+          </div>
+
           {/* Market URL - Full width */}
           <div className="mb-4">
             <label htmlFor="url-input" className="block text-sm font-medium text-gray-900 mb-2">
@@ -364,83 +541,148 @@ export default function PolymarketScreenshotterPage() {
             />
           </div>
 
-          {/* Options Grid */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Image Type */}
-            <div>
-              <label htmlFor="image-type" className="block text-sm font-medium text-gray-900 mb-2">
-                Image Type
-              </label>
-              <select
-                id="image-type"
-                value={imageType}
-                onChange={(e) => setImageType(e.target.value as typeof imageType)}
-                disabled={loading}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="screenshot">Screenshot</option>
-                <option value="og">OG Image</option>
-              </select>
-            </div>
-
+          {/* Options - Only show for screenshots */}
+          {imageType === 'screenshot' && (
+          <div className="flex flex-wrap items-end gap-6">
             {/* Time Range */}
-            <div>
-              <label htmlFor="time-range" className="block text-sm font-medium text-gray-900 mb-2">
+            <div className="flex-shrink-0">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
                 Time Range
               </label>
-              <select
-                id="time-range"
-                value={timeRange}
-                onChange={(e) => setTimeRange(e.target.value as typeof timeRange)}
-                disabled={loading || imageType === 'og'}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="1h">1H</option>
-                <option value="6h">6H</option>
-                <option value="1d">1D</option>
-                <option value="1w">1W</option>
-                <option value="1m">1M</option>
-                <option value="max">MAX</option>
-              </select>
+              <div className="flex flex-wrap gap-2">
+                {(['1h', '6h', '1d', '1w', '1m', 'max'] as const).map((range) => (
+                  <button
+                    key={range}
+                    type="button"
+                    onClick={() => setTimeRange(range)}
+                    disabled={loading}
+                    className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                      timeRange === range
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    {range.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Aspect Ratio */}
-            <div>
-              <label htmlFor="aspect" className="block text-sm font-medium text-gray-900 mb-2">
+            <div className="flex-shrink-0 border-l border-gray-200 pl-6">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
                 Aspect Ratio
               </label>
-              <select
-                id="aspect"
-                value={aspect}
-                onChange={(e) => setAspect(e.target.value as typeof aspect)}
-                disabled={loading || imageType === 'og'}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="twitter">7:8 (Twitter)</option>
-                <option value="square">1:1 (Square)</option>
-              </select>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAspect('twitter')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    aspect === 'twitter'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  7:8
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAspect('square')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    aspect === 'square'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  1:1
+                </button>
+              </div>
+            </div>
+
+            {/* Chart Line */}
+            <div className="flex-shrink-0 border-l border-gray-200 pl-6">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Line
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setChartLineThickness('normal')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    chartLineThickness === 'normal'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Normal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartLineThickness('thick')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    chartLineThickness === 'thick'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Thick
+                </button>
+              </div>
             </div>
 
             {/* Chart Watermark */}
-            <div>
-              <label htmlFor="chart-watermark" className="block text-sm font-medium text-gray-900 mb-2">
-                Chart Watermark
+            <div className="flex-shrink-0 border-l border-gray-200 pl-6">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Watermark
               </label>
-              <select
-                id="chart-watermark"
-                value={chartWatermark}
-                onChange={(e) => setChartWatermark(e.target.value as typeof chartWatermark)}
-                disabled={loading || imageType === 'og'}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-gray-50"
-              >
-                <option value="none">None</option>
-                <option value="wordmark">Wordmark</option>
-                <option value="icon">Icon</option>
-              </select>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setChartWatermark('none')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    chartWatermark === 'none'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  None
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartWatermark('wordmark')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    chartWatermark === 'wordmark'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Wordmark
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartWatermark('icon')}
+                  disabled={loading}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    chartWatermark === 'icon'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Icon
+                </button>
+              </div>
             </div>
           </div>
+          )}
 
-          {/* Secondary Options Row */}
+          {/* Secondary Options Row - Only show for screenshots */}
+          {imageType === 'screenshot' && (
           <div className="mt-4 flex flex-wrap items-end gap-4">
             {/* Payout Display */}
             <div className="flex items-center gap-2">
@@ -517,6 +759,7 @@ export default function PolymarketScreenshotterPage() {
               </button>
             </div>
           </div>
+          )}
 
           <p className="mt-4 text-xs text-gray-500">Tip: hit <span className="font-medium text-gray-900">Enter</span> to capture.</p>
 
@@ -528,33 +771,111 @@ export default function PolymarketScreenshotterPage() {
         </div>
 
         {/* Result */}
-        {result && result.imageBase64 && (
-          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-12">
-            {/* Preview (left) */}
-            <div className="lg:col-span-8">
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-1">
-                  <h2 className="text-base font-semibold text-gray-900">{result.marketTitle}</h2>
-                  {result.url && (
-                    <a
-                      href={result.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:text-blue-500"
-                    >
-                      {result.url}
-                    </a>
-                  )}
-                </div>
+        {result && (
+          <div className="mt-8 space-y-8">
+            {/* Screenshot Section */}
+            {result.imageBase64 && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+              {/* Preview (left) */}
+              <div className="lg:col-span-8">
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-1 mb-4">
+                    <h2 className="text-base font-semibold text-gray-900">Screenshot</h2>
+                    {result.url && (
+                      <a
+                        href={result.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:text-blue-500"
+                      >
+                        {result.url}
+                      </a>
+                    )}
+                  </div>
 
-                {imageType === 'og' ? (
+                  <div className="mt-5 flex justify-center">
+                    <div className="relative w-full max-w-[420px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                      <div style={{ aspectRatio: aspect === 'square' ? '1 / 1' : '7 / 8' }}>
+                        <img
+                          src={`data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`}
+                          alt={result.marketTitle || 'Polymarket screenshot'}
+                          className="h-full w-full object-contain bg-white"
+                        />
+                      </div>
+                      <div className="absolute bottom-3 right-3 rounded-lg border border-gray-200 bg-white/90 px-2 py-1 text-xs text-gray-600 shadow-sm backdrop-blur">
+                        {aspect === 'square' ? '1:1' : '7:8'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 text-xs text-gray-500">
+                    File: <span className="font-medium text-gray-900">{result.fileName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions (right) */}
+              <div className="lg:col-span-4">
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="text-sm font-semibold text-gray-900">Actions</div>
+                    <div className="text-xs text-gray-500">Export</div>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <button
+                      id="copy-btn"
+                      onClick={handleCopyToClipboard}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3"
+                        />
+                      </svg>
+                      Copy to clipboard
+                    </button>
+
+                    <button
+                      onClick={handleDownload}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download
+                    </button>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+                    Best for Twitter single-image posts. If you need a different crop or theme, tell me what you want to match.
+                  </div>
+                </div>
+              </div>
+            </div>
+            )}
+
+            {/* OG Image Section */}
+            {result.ogImage?.imageBase64 && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                {/* Preview (left) */}
+                <div className="lg:col-span-8">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-1 mb-4">
+                      <h2 className="text-base font-semibold text-gray-900">OG Image</h2>
+                      <p className="text-sm text-gray-600">OpenGraph image for social sharing</p>
+                    </div>
+
                   <div className="mt-5">
                     <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
                       <p className="font-medium text-gray-900 mb-1">Interactive Editor</p>
                       <p>Drag & drop an image, or paste (Ctrl/Cmd+V) to add to the left side. Drag to reposition, scroll to zoom.</p>
                     </div>
                     <div
-                      className="relative w-full overflow-hidden rounded-2xl border-2 border-dashed border-gray-300 bg-white"
+                      className="og-editor-container relative w-full overflow-hidden rounded-2xl border-2 border-dashed border-gray-300 bg-white"
                       onDrop={handleDrop}
                       onDragOver={(e) => e.preventDefault()}
                       onPaste={handlePaste}
@@ -563,12 +884,12 @@ export default function PolymarketScreenshotterPage() {
                       onMouseUp={handleMouseUp}
                       onMouseLeave={handleMouseUp}
                       onWheel={handleWheel}
-                      style={{ cursor: leftSideImage ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+                      style={{ cursor: leftSideImage ? (isResizing ? 'nwse-resize' : isDragging ? 'grabbing' : 'grab') : 'default' }}
                     >
-                      <div className="relative" style={{ aspectRatio: ogAspectRatio }}>
+                      <div className="og-preview-image-container relative" style={{ aspectRatio: ogAspectRatio }}>
                         {/* OG image (right half visible, left is transparent/blank) */}
                         <img
-                          src={`data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`}
+                          src={`data:${result.ogImage.imageMimeType || 'image/png'};base64,${result.ogImage.imageBase64}`}
                           alt={result.marketTitle || 'Polymarket OG image'}
                           className="relative h-full w-full object-cover bg-white"
                           draggable={false}
@@ -594,15 +915,33 @@ export default function PolymarketScreenshotterPage() {
                           </div>
                         )}
 
-                        {/* Crop mask: dims everything outside the LEFT HALF, but does not hide your image entirely.
-                            This avoids the “it cropped immediately” feeling while still showing what will export. */}
-                        <div
-                          className="pointer-events-none absolute inset-0"
-                          style={{
-                            background: 'rgba(0,0,0,0.10)',
-                            clipPath: 'inset(0 0 0 50%)', // right half dimmed
-                          }}
-                        />
+                        {/* Resize handles (left half) */}
+                        {leftSideImage && (
+                          <div className="absolute inset-0 pointer-events-none" style={{ clipPath: 'inset(0 50% 0 0)' }}>
+                            <div
+                              className="pointer-events-auto absolute h-3 w-3 rounded-full border border-white bg-blue-500 shadow"
+                              style={{ top: 6, left: 6, cursor: 'nwse-resize' }}
+                              onMouseDown={handleResizeMouseDown('nw')}
+                            />
+                            <div
+                              className="pointer-events-auto absolute h-3 w-3 rounded-full border border-white bg-blue-500 shadow"
+                              style={{ top: 6, left: 'calc(50% - 12px)', cursor: 'nesw-resize' }}
+                              onMouseDown={handleResizeMouseDown('ne')}
+                            />
+                            <div
+                              className="pointer-events-auto absolute h-3 w-3 rounded-full border border-white bg-blue-500 shadow"
+                              style={{ bottom: 6, left: 6, cursor: 'nesw-resize' }}
+                              onMouseDown={handleResizeMouseDown('sw')}
+                            />
+                            <div
+                              className="pointer-events-auto absolute h-3 w-3 rounded-full border border-white bg-blue-500 shadow"
+                              style={{ bottom: 6, left: 'calc(50% - 12px)', cursor: 'nwse-resize' }}
+                              onMouseDown={handleResizeMouseDown('se')}
+                            />
+                          </div>
+                        )}
+
+                        {/* No dimming mask: keep OG preview true-to-color. */}
 
                         {/* Center divider */}
                         <div className="pointer-events-none absolute inset-y-0 left-1/2 w-[2px] -translate-x-[1px] bg-blue-500/60" />
@@ -676,85 +1015,78 @@ export default function PolymarketScreenshotterPage() {
                         </>
                       )}
                     </div>
-                  </div>
-                ) : (
-                  <div className="mt-5 flex justify-center">
-                    <div className="relative w-full max-w-[420px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                      <div style={{ aspectRatio: aspect === 'square' ? '1 / 1' : '7 / 8' }}>
-                        <img
-                          src={`data:${result.imageMimeType || 'image/png'};base64,${result.imageBase64}`}
-                          alt={result.marketTitle || 'Polymarket screenshot'}
-                          className="h-full w-full object-contain bg-white"
-                        />
-                      </div>
-                      <div className="absolute bottom-3 right-3 rounded-lg border border-gray-200 bg-white/90 px-2 py-1 text-xs text-gray-600 shadow-sm backdrop-blur">
-                        {aspect === 'square' ? '1:1' : '7:8'}
-                      </div>
+                    <div className="mt-5 text-xs text-gray-500">
+                      File: <span className="font-medium text-gray-900">{result.ogImage.fileName}</span>
                     </div>
                   </div>
-                )}
+                </div>
+                </div>
 
-                <div className="mt-5 text-xs text-gray-500">
-                  File: <span className="font-medium text-gray-900">{result.fileName}</span>
+                {/* Actions (right) */}
+                <div className="lg:col-span-4">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="text-sm font-semibold text-gray-900">Actions</div>
+                      <div className="text-xs text-gray-500">Export</div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      {leftSideImage ? (
+                        <button
+                          onClick={handleExportOGImage}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          Download Composite
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            id="copy-og-btn"
+                            onClick={handleCopyOGToClipboard}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50"
+                          >
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3"
+                              />
+                            </svg>
+                            Copy OG Image
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              if (!result.ogImage?.imageBase64 || !result.ogImage?.fileName) return
+                              const link = document.createElement('a')
+                              link.href = `data:${result.ogImage.imageMimeType || 'image/png'};base64,${result.ogImage.imageBase64}`
+                              link.download = result.ogImage.fileName
+                              document.body.appendChild(link)
+                              link.click()
+                              document.body.removeChild(link)
+                            }}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
+                          >
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download OG Image
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+                      Add your own image to the left side for custom social sharing cards.
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            {/* Actions (right) */}
-            <div className="lg:col-span-4">
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-900">Actions</div>
-                  <div className="text-xs text-gray-500">Export</div>
-                </div>
-
-                <div className="grid gap-3">
-                  {imageType === 'og' && leftSideImage ? (
-                    <button
-                      onClick={handleExportOGImage}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
-                    >
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      Download Composite
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        id="copy-btn"
-                        onClick={handleCopyToClipboard}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50"
-                      >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3"
-                          />
-                        </svg>
-                        Copy to clipboard
-                      </button>
-
-                      <button
-                        onClick={handleDownload}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
-                      >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Download
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
-                  Best for Twitter single-image posts. If you need a different crop or theme, tell me what you want to match.
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 

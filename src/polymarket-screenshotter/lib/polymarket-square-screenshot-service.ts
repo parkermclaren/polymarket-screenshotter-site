@@ -6,6 +6,7 @@ import { styleBuyButtons } from './rules/buy-buttons'
 import { styleOutcomeLegend } from './rules/outcome-legend'
 import { cropToEventChart, measureEventChartHeight } from './rules/event-chart-crop'
 import { filterChartToSingleOutcome } from './rules/single-outcome-filter'
+import { setChartLineThickness, type ChartLineThickness } from './rules/chart-line-thickness'
 
 // Square aspect ratio (1:1) for single image posts
 // This means for a given width, height = width
@@ -17,6 +18,7 @@ interface ScreenshotOptions {
   deviceScaleFactor?: number
   timeRange?: '1h' | '6h' | '1d' | '1w' | '1m' | 'max' // Chart time range, defaults to '1d'
   chartWatermark?: ChartWatermarkMode | boolean // Watermark mode; boolean true maps to 'wordmark'
+  chartLineThickness?: ChartLineThickness
   debugLayout?: boolean
   showPotentialPayout?: boolean // Show potential payout below buy buttons (e.g., "$150 → $197")
   payoutInvestment?: number // Investment amount for payout calculation (defaults to $150)
@@ -1976,6 +1978,9 @@ export class PolymarketSquareScreenshotService {
       // Final pass: remove any "How it works" elements that may have reappeared
       await removeHowItWorksSecondPass(page)
       
+      // Apply thicker line styling right before capture (chart may re-render on time-range changes).
+      await setChartLineThickness(page, options.chartLineThickness || 'normal')
+
       console.log('📸 Taking viewport screenshot...')
       const screenshot = await page.screenshot({
         type: 'png'

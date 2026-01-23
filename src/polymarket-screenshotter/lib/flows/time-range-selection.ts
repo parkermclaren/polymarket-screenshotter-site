@@ -39,6 +39,27 @@ export async function selectTimeRange(
           .catch(() => console.log('⚠️ Network idle timeout after tab click'))
 
         console.log(`✓ Clicked ${timeRange.toUpperCase()} tab via ${clickMethod} and data loaded`)
+        
+        // CRITICAL: Wait for the chart to actually re-render after the time range change
+        // Network idle doesn't guarantee the DOM/SVG has been updated
+        console.log('⏳ Waiting for chart to re-render after time range change...')
+        await page.waitForFunction(
+          () => {
+            const ticks = document.querySelectorAll('.visx-axis-tick')
+            const svg = document.querySelector('#group-chart-container svg, svg[class*="chart"], svg[class*="visx"]')
+            const paths = svg?.querySelectorAll('path')
+            // Either we have ticks OR we have paths in the SVG
+            return (ticks.length > 0 || (paths && paths.length > 0))
+          },
+          { timeout: 8000, polling: 100 }
+        ).catch(() => {
+          console.log('⚠️ Chart re-render wait timed out, continuing anyway')
+        })
+        
+        // Additional wait for DOM to fully stabilize after render
+        await new Promise(resolve => setTimeout(resolve, 500))
+        console.log('✅ Chart re-render complete')
+        
         break
       }
     }

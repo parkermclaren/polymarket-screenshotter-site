@@ -14,6 +14,38 @@ export async function hideUnwantedElements(page: Page): Promise<void> {
       }
     })
 
+    // HIDE CATEGORY BUTTONS IN TOP RIGHT (Breaking, Politics, Crypto, Tech)
+    const categoryButtons = ['Breaking', 'Politics', 'Crypto', 'Tech', 'Trending']
+    document.querySelectorAll('header, nav, div').forEach(container => {
+      const containerEl = container as HTMLElement
+      const rect = containerEl.getBoundingClientRect()
+      // Check if this is in the top area of the page (likely header/nav)
+      if (rect.top < 100 && rect.top >= 0) {
+        containerEl.querySelectorAll('button, a, span, div').forEach(el => {
+          const element = el as HTMLElement
+          const text = element.textContent?.trim() || ''
+          // Check if this element contains any of the category names
+          for (const category of categoryButtons) {
+            if (text === category || (text.includes(category) && text.length < 20)) {
+              // Hide the element itself or its parent if it's a small container
+              const parent = element.parentElement
+              if (parent && parent !== containerEl) {
+                const parentRect = parent.getBoundingClientRect()
+                // If parent is a small container (likely a button wrapper), hide it
+                if (parentRect.width < 200 && parentRect.height < 50) {
+                  parent.style.display = 'none'
+                } else {
+                  element.style.display = 'none'
+                }
+              } else {
+                element.style.display = 'none'
+              }
+            }
+          }
+        })
+      }
+    })
+
     // HIDE STICKY CATEGORY NAV (Trending, Breaking, New, etc.)
     document.querySelectorAll('nav').forEach(nav => {
       const style = window.getComputedStyle(nav as HTMLElement)

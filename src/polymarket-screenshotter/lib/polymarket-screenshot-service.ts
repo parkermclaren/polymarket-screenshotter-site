@@ -12,6 +12,7 @@ import { selectTimeRange } from './flows/time-range-selection'
 import { styleOutcomeLegend } from './rules/outcome-legend'
 import { cropToEventChart } from './rules/event-chart-crop'
 import { filterChartToSingleOutcome } from './rules/single-outcome-filter'
+import { setChartLineThickness, type ChartLineThickness } from './rules/chart-line-thickness'
 
 // Twitter optimal aspect ratio is 7:8 (width:height) for single image posts
 // This means for a given width, height = width * 8/7
@@ -23,6 +24,7 @@ interface ScreenshotOptions {
   deviceScaleFactor?: number
   timeRange?: '1h' | '6h' | '1d' | '1w' | '1m' | 'max' // Chart time range, defaults to '1d'
   chartWatermark?: ChartWatermarkMode | boolean // Watermark mode; boolean true maps to 'wordmark'
+  chartLineThickness?: ChartLineThickness
   debugLayout?: boolean
   showPotentialPayout?: boolean // Show potential payout below buy buttons (e.g., "$150 → $197")
   payoutInvestment?: number // Investment amount for payout calculation (defaults to $150)
@@ -398,6 +400,7 @@ export class PolymarketScreenshotService {
       await styleOutcomeLegend(page)
       await adjustHeightForDateChips(page, { baseChartHeight: 400 })
       await applyChartWatermark(page, chartWatermark)
+      await setChartLineThickness(page, options.chartLineThickness || 'normal')
 
       // Let layout settle after DOM manipulation
       // Use a shorter wait, just enough for styles to apply
@@ -445,6 +448,7 @@ export class PolymarketScreenshotService {
       // After time range updates, re-apply rules that may have been affected
       await styleAxisLabels(page)
       await applyChartWatermark(page, chartWatermark)
+      await setChartLineThickness(page, options.chartLineThickness || 'normal')
 
       // Extra wait to ensure axis labels are fully rendered after manipulation
       // Reduced from 500ms - manipulation is synchronous, just need paint
