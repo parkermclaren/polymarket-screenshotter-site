@@ -1628,6 +1628,9 @@ export class PolymarketSquareScreenshotService {
         showPotentialPayout: options.showPotentialPayout || false,
         payoutInvestment: options.payoutInvestment || 150
       })
+      
+      // Remove "How it works" after styling (it may have reappeared during DOM updates)
+      await removeHowItWorks(page)
 
       // After adding payout text, ensure the volume row is still visible
       // The taller button container (when showing payout) can cover the volume row
@@ -1966,6 +1969,9 @@ export class PolymarketSquareScreenshotService {
         }
       }
 
+      // Final pass: remove any "How it works" elements that may have reappeared
+      await removeHowItWorksSecondPass(page)
+      
       console.log('📸 Taking viewport screenshot...')
       const screenshot = await page.screenshot({
         type: 'png'
