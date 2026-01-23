@@ -258,6 +258,25 @@ export default function PolymarketScreenshotterPage() {
     }
   }, [result])
 
+  const handleCopyZeroWidthSpace = useCallback(async () => {
+    try {
+      const zwsp = '\u200B'
+      await navigator.clipboard.writeText(zwsp)
+
+      const button = document.getElementById('copy-zwsp-btn')
+      if (button) {
+        const originalText = button.textContent
+        button.textContent = 'Copied: U+200B'
+        setTimeout(() => {
+          button.textContent = originalText
+        }, 2000)
+      }
+    } catch (err) {
+      console.error('Failed to copy zero width space:', err)
+      setError('Failed to copy zero width space.')
+    }
+  }, [])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !loading) {
       handleCapture()
@@ -1078,6 +1097,23 @@ export default function PolymarketScreenshotterPage() {
                           </button>
                         </>
                       )}
+
+                      {/* Zero width space button - always visible */}
+                      <button
+                        id="copy-zwsp-btn"
+                        onClick={handleCopyZeroWidthSpace}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3"
+                          />
+                        </svg>
+                        Copy zero width space
+                      </button>
                     </div>
 
                     <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
