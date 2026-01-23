@@ -259,19 +259,21 @@ export default function PolymarketScreenshotterPage() {
               </div>
             )}
 
-            {/* Debug Layout */}
-            <div className="flex items-center gap-2">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={debugLayout}
-                  onChange={(e) => setDebugLayout(e.target.checked)}
-                  disabled={loading}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm font-medium text-gray-900">Debug overlay</span>
-              </label>
-            </div>
+            {/* Debug Layout - Only show in development */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={debugLayout}
+                    onChange={(e) => setDebugLayout(e.target.checked)}
+                    disabled={loading}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-900">Debug overlay</span>
+                </label>
+              </div>
+            )}
 
             {/* Capture Button */}
             <div className="ml-auto">

@@ -346,7 +346,8 @@ export async function POST(request: NextRequest) {
         deviceScaleFactor: deviceScaleFactor || 2,
         timeRange: timeRange || '6h', // Default to 6H for better x-axis labels
         chartWatermark: normalizeChartWatermark(chartWatermark),
-        debugLayout: debugLayout === true,
+        // Only allow debugLayout in development
+        debugLayout: process.env.NODE_ENV === 'development' && debugLayout === true,
       })
     )
 
@@ -386,7 +387,8 @@ export async function GET(request: NextRequest) {
   const aspect = searchParams.get('aspect') || 'twitter'
   const chartWatermark = normalizeChartWatermark(searchParams.get('chartWatermark'))
   const returnType = searchParams.get('return') || 'image' // 'image' or 'json'
-  const debugLayout = searchParams.get('debugLayout') === '1' || searchParams.get('debugLayout') === 'true'
+  // Only allow debugLayout in development
+  const debugLayout = process.env.NODE_ENV === 'development' && (searchParams.get('debugLayout') === '1' || searchParams.get('debugLayout') === 'true')
   const showPotentialPayout = searchParams.get('showPotentialPayout') === '1' || searchParams.get('showPotentialPayout') === 'true'
   const payoutInvestment = searchParams.get('payoutInvestment') ? parseInt(searchParams.get('payoutInvestment')!) : 150
 
