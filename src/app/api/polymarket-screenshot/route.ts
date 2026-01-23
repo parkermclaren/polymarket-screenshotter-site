@@ -155,10 +155,10 @@ async function fetchOGImage(url: string): Promise<{ success: boolean; image?: Bu
         width: rightHalfWidth,
         height,
       })
-      .png({ density }) // Preserve DPI
+      .png()
       .toBuffer()
 
-    // Create a blank transparent canvas for the left half - matching DPI
+    // Create a blank transparent canvas for the left half
     const blankCanvas = await sharp({
       create: {
         width: leftHalfWidth,
@@ -167,7 +167,7 @@ async function fetchOGImage(url: string): Promise<{ success: boolean; image?: Bu
         background: { r: 255, g: 255, b: 255, alpha: 0 }, // Transparent background
       },
     })
-      .png({ density }) // Match DPI
+      .png()
       .toBuffer()
 
     // Composite: blank canvas on left, right half on right - preserving DPI
@@ -183,8 +183,8 @@ async function fetchOGImage(url: string): Promise<{ success: boolean; image?: Bu
         { input: blankCanvas, left: 0, top: 0 }, // Left half: blank
         { input: rightHalf, left: rightHalfLeft, top: 0 }, // Right half: market data
       ])
-      .withMetadata({ density }) // CRITICAL: Preserve DPI in final image
-      .png({ density }) // Ensure DPI is written to PNG
+      .withMetadata({ density }) // Preserve DPI in final image
+      .png()
       .toBuffer()
 
     const fileName = `polymarket-og-${slug}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`
